@@ -5,7 +5,7 @@
 
 ## Context and Problem Statement
 
-We need to record the architectural decisions made for the Webshop, so that current and future team members can understand why the system looks the way it does. Decisions that live only in people's heads, chat threads or meeting notes get lost, and the C4 diagrams alone show *what* the architecture is, not *why*.
+We need to record the architectural decisions made for the Webshop, so that current and future team members can understand why the system looks the way it does. Decisions that only live in people's heads, chat threads or meeting notes get lost, and the C4 diagrams alone show *what* the architecture is, not *why*.
 
 How do we capture architecture decisions so that they stay close to the architecture model and change together with it?
 
