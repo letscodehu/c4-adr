@@ -15,6 +15,7 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
         customer -> webshop "Browses products and places orders using"
         webshop -> emailService "Sends order confirmation emails using"
         emailService -> customer "Delivers emails to"
+        webshop -> customer "Sends order status updates to"
     }
 
     views {
