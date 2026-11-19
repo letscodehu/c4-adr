@@ -12,7 +12,7 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
             tags "External"
         }
 
-        customer -> webshop "Browses products and places orders using"
+        customer -> webshopp "Browses products and places orders using"
         webshop -> emailService "Sends order confirmation emails using"
         emailService -> customer "Delivers emails to"
     }
