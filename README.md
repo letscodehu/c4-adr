@@ -2,7 +2,7 @@
 
 A demo repository showing how the [C4 model](https://c4model.com/) and
 [Architecture Decision Records](https://adr.github.io/) (ADRs) work together in one
-repository. It accompanies a lead magnet document that walks through the same flow.
+repository.
 
 The story is told through an imaginary **webshop**. Every architectural decision is
 recorded as an ADR, and the C4 model (written in [Structurizr DSL](https://docs.structurizr.com/dsl))
