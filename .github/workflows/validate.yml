@@ -1,0 +1,27 @@
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  WORKSPACE: docs/architecture/workspace.dsl
+  STRUCTURIZR_CLI_IMAGE: structurizr/cli:2025.11.09
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Structurizr DSL
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate workspace
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/usr/local/structurizr" \
+            "$STRUCTURIZR_CLI_IMAGE" \
+            validate -workspace "$WORKSPACE"
