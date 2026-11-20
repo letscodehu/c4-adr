@@ -16,14 +16,19 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
                 order = component "Order" "Shopping cart, checkout and order lifecycle." "Module"
                 inventory = component "Inventory" "Stock levels and stock reservations for orders." "Module"
                 customerAccounts = component "Customer Accounts" "Registration, sign-in and customer profiles." "Module"
+                payments = component "Payments" "Creates payments at the payment service provider, receives its payment events and tracks the payment status of orders." "Module"
             }
 
-            database = container "Database" "Stores products, orders, stock levels and customer accounts, one schema per module." "PostgreSQL" {
+            database = container "Database" "Stores products, orders, payment records, stock levels and customer accounts, one schema per module." "PostgreSQL" {
                 tags "Database"
             }
         }
 
         emailService = softwareSystem "Email Service" "Third-party service that delivers transactional emails." {
+            tags "External"
+        }
+
+        stripe = softwareSystem "Stripe" "Third-party payment service provider: collects card details and processes card payments." {
             tags "External"
         }
 
@@ -37,6 +42,12 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
         webshop.monolith.order -> webshop.monolith.customerAccounts "Gets customer and delivery details from" "In-process call"
         webshop.monolith.order -> emailService "Sends order confirmation emails using" "HTTPS"
         emailService -> customer "Delivers emails to"
+
+        webshop.webApp -> stripe "Sends card details directly to, using Stripe.js" "HTTPS"
+        webshop.monolith.order -> webshop.monolith.payments "Requests payment for orders using" "In-process call"
+        webshop.monolith.payments -> stripe "Creates payment intents using" "HTTPS/REST"
+        stripe -> webshop.monolith.payments "Notifies about payment results using" "Webhook, HTTPS"
+        webshop.monolith.payments -> webshop.monolith.order "Marks orders as paid or failed in" "In-process call"
 
         webshop.monolith -> webshop.database "Reads from and writes to" "SQL/TCP"
 
@@ -71,19 +82,32 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
         container webshop "Containers" {
             include *
             autolayout lr
-            description "The Container view of the Webshop: a single-page application, a modular monolith (ADR-0002) and its PostgreSQL database (ADR-0003)."
+            description "The Container view of the Webshop: a single-page application, a modular monolith (ADR-0002), its PostgreSQL database (ADR-0003) and the external Stripe payment service provider (ADR-0004)."
         }
 
         component webshop.monolith "Components" {
             include *
             autolayout lr
-            description "The Component view of the Webshop Monolith: its business modules (ADR-0002)."
+            description "The Component view of the Webshop Monolith: its business modules (ADR-0002), including the Payments module that integrates with Stripe (ADR-0004)."
         }
 
         deployment webshop "Production" "Deployment" {
             include *
             autolayout lr
             description "The Production Deployment view of the Webshop: the monolith on Kubernetes and a managed PostgreSQL database (ADR-0003)."
+        }
+
+        dynamic webshop.monolith "Checkout" {
+            customer -> webshop.webApp "Reviews the cart and clicks Pay"
+            webshop.webApp -> webshop.monolith.order "Submits the order"
+            webshop.monolith.order -> webshop.monolith.payments "Requests payment for the order total"
+            webshop.monolith.payments -> stripe "Creates a payment intent (its client secret goes back to the Web Application)"
+            webshop.webApp -> stripe "Confirms the payment with the card details"
+            stripe -> webshop.monolith.payments "Sends a signed payment_intent.succeeded webhook"
+            webshop.monolith.payments -> webshop.monolith.order "Marks the order as paid"
+            webshop.monolith.order -> emailService "Sends the order confirmation email"
+            autolayout tb
+            description "The checkout flow: the customer pays through Stripe, and the order is marked as paid when Stripe's webhook arrives (ADR-0004)."
         }
 
         styles {
