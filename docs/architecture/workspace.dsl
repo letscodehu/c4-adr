@@ -24,6 +24,12 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
             description "The System Context view of the Webshop."
         }
 
+        systemLandscape "SystemLandscape" {
+            include *
+            autolayout lr
+            description "Every person and software system of the webshop landscape."
+        }
+
         styles {
             element "Element" {
                 color #ffffff
