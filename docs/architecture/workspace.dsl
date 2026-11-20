@@ -113,6 +113,9 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
             element "Database" {
                 shape Cylinder
             }
+            element "Deployment Node" {
+                color #444444
+            }
         }
     }
 
