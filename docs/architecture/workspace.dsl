@@ -101,12 +101,12 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
             customer -> webshop.webApp "Reviews the cart and clicks Pay"
             webshop.webApp -> webshop.monolith.order "Submits the order"
             webshop.monolith.order -> webshop.monolith.payments "Requests payment for the order total"
-            webshop.monolith.payments -> stripe "Creates a payment intent and returns its client secret to the Web Application"
-            webshop.webApp -> stripe "Confirms the payment with the card details, which never reach the Webshop"
+            webshop.monolith.payments -> stripe "Creates a payment intent (its client secret goes back to the Web Application)"
+            webshop.webApp -> stripe "Confirms the payment with the card details"
             stripe -> webshop.monolith.payments "Sends a signed payment_intent.succeeded webhook"
             webshop.monolith.payments -> webshop.monolith.order "Marks the order as paid"
             webshop.monolith.order -> emailService "Sends the order confirmation email"
-            autolayout lr
+            autolayout tb
             description "The checkout flow: the customer pays through Stripe, and the order is marked as paid when Stripe's webhook arrives (ADR-0004)."
         }
 
