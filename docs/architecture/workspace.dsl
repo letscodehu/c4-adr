@@ -19,6 +19,10 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
                 payments = component "Payments" "Creates payments at the payment service provider, receives its payment events and tracks the payment status of orders." "Module"
             }
 
+            messageBroker = container "Message Broker" "Delivers domain events between modules: Order publishes OrderPlaced, Inventory publishes the stock reservation result." "RabbitMQ" {
+                tags "Queue"
+            }
+
             database = container "Database" "Stores products, orders, payment records, stock levels and customer accounts, one schema per module." "PostgreSQL" {
                 tags "Database"
             }
@@ -38,7 +42,6 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
         webshop.webApp -> webshop.monolith.customerAccounts "Signs customers in and manages profiles using" "JSON/HTTPS"
 
         webshop.monolith.order -> webshop.monolith.catalog "Gets product details and prices from" "In-process call"
-        webshop.monolith.order -> webshop.monolith.inventory "Reserves stock (synchronous)" "REST/HTTP"
         webshop.monolith.order -> webshop.monolith.customerAccounts "Gets customer and delivery details from" "In-process call"
         webshop.monolith.order -> emailService "Sends order confirmation emails using" "HTTPS"
         emailService -> customer "Delivers emails to"
@@ -48,6 +51,11 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
         webshop.monolith.payments -> stripe "Creates payment intents using" "HTTPS/REST"
         stripe -> webshop.monolith.payments "Notifies about payment results using" "Webhook, HTTPS"
         webshop.monolith.payments -> webshop.monolith.order "Marks orders as paid or failed in" "In-process call"
+
+        webshop.monolith.order -> webshop.messageBroker "Publishes OrderPlaced" "AMQP"
+        webshop.messageBroker -> webshop.monolith.inventory "Consumes OrderPlaced" "AMQP"
+        webshop.monolith.inventory -> webshop.messageBroker "Publishes StockReserved / StockReservationFailed" "AMQP"
+        webshop.messageBroker -> webshop.monolith.order "Consumes StockReserved / StockReservationFailed" "AMQP"
 
         webshop.monolith -> webshop.database "Reads from and writes to" "SQL/TCP"
 
@@ -63,6 +71,10 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
                     deploymentNode "Webshop Monolith Pod" "" "Docker container" 2 {
                         containerInstance webshop.monolith
                     }
+                }
+
+                deploymentNode "Managed RabbitMQ" "Managed message broker service: a three-node cluster with quorum queues, TLS and automated upgrades." "RabbitMQ" {
+                    containerInstance webshop.messageBroker
                 }
 
                 deploymentNode "Managed PostgreSQL" "Managed database service: automated backups, point-in-time recovery, encryption at rest and a standby replica." "PostgreSQL" {
@@ -82,33 +94,37 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
         container webshop "Containers" {
             include *
             autolayout lr
-            description "The Container view of the Webshop: a single-page application, a modular monolith (ADR-0002), its PostgreSQL database (ADR-0003) and the external Stripe payment service provider (ADR-0004)."
+            description "The Container view of the Webshop: a single-page application, a modular monolith (ADR-0002), its PostgreSQL database (ADR-0003) and the external Stripe payment service provider (ADR-0004) and the RabbitMQ message broker between modules (ADR-0006)."
         }
 
         component webshop.monolith "Components" {
             include *
             autolayout lr
-            description "The Component view of the Webshop Monolith: its business modules (ADR-0002), including the Payments module that integrates with Stripe (ADR-0004) and the synchronous REST call from Order to Inventory (ADR-0005)."
+            description "The Component view of the Webshop Monolith: its business modules (ADR-0002), including the Payments module that integrates with Stripe (ADR-0004); Order and Inventory communicate only through events on the Message Broker (ADR-0006, supersedes ADR-0005)."
         }
 
         deployment webshop "Production" "Deployment" {
             include *
             autolayout lr
-            description "The Production Deployment view of the Webshop: the monolith on Kubernetes and a managed PostgreSQL database (ADR-0003)."
+            description "The Production Deployment view of the Webshop: the monolith on Kubernetes and a managed PostgreSQL database (ADR-0003) and a managed RabbitMQ message broker (ADR-0006)."
         }
 
         dynamic webshop.monolith "Checkout" {
             customer -> webshop.webApp "Reviews the cart and clicks Pay"
             webshop.webApp -> webshop.monolith.order "Submits the order"
-            webshop.monolith.order -> webshop.monolith.inventory "Reserves stock for the order lines (synchronous REST call; checkout waits for the answer)"
+            webshop.monolith.order -> webshop.messageBroker "Publishes OrderPlaced via the transactional outbox (checkout does not wait for Inventory)"
             webshop.monolith.order -> webshop.monolith.payments "Requests payment for the order total"
-            webshop.monolith.payments -> stripe "Creates a payment intent (its client secret goes back to the Web Application)"
-            webshop.webApp -> stripe "Confirms the payment with the card details"
-            stripe -> webshop.monolith.payments "Sends a signed payment_intent.succeeded webhook"
-            webshop.monolith.payments -> webshop.monolith.order "Marks the order as paid"
+            webshop.monolith.payments -> stripe "Creates a payment intent with manual capture (its client secret goes back to the Web Application)"
+            webshop.webApp -> stripe "Confirms the payment with the card details (the card is authorised, not charged yet)"
+            stripe -> webshop.monolith.payments "Sends a signed payment_intent.amount_capturable_updated webhook"
+            webshop.monolith.payments -> webshop.monolith.order "Marks the order as payment authorised"
+            webshop.messageBroker -> webshop.monolith.inventory "Delivers OrderPlaced; Inventory reserves the stock (idempotent on the order ID)"
+            webshop.monolith.inventory -> webshop.messageBroker "Publishes StockReserved"
+            webshop.messageBroker -> webshop.monolith.order "Delivers StockReserved"
+            webshop.monolith.order -> webshop.monolith.payments "Captures the authorised payment"
             webshop.monolith.order -> emailService "Sends the order confirmation email"
             autolayout tb
-            description "The checkout flow: Order reserves stock in Inventory with a synchronous REST call before payment (ADR-0005), the customer pays through Stripe, and the order is marked as paid when Stripe's webhook arrives (ADR-0004)."
+            description "The checkout flow: Order publishes OrderPlaced to the Message Broker and continues to payment without waiting for Inventory (ADR-0006, supersedes ADR-0005); the card is authorised through Stripe (ADR-0004), Inventory reserves the stock asynchronously, and the payment is captured once StockReserved arrives."
         }
 
         styles {
@@ -137,6 +153,9 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
             }
             element "Database" {
                 shape Cylinder
+            }
+            element "Queue" {
+                shape Pipe
             }
             element "Deployment Node" {
                 color #444444

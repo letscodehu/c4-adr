@@ -1,6 +1,11 @@
+---
+status: superseded by ADR-0006
+date: 2026-11-20
+---
+
 # Synchronous REST between Order and Inventory
 
-* Status: Accepted
+* Status: Superseded by [ADR-0006: Introduce an event bus (RabbitMQ)](0006-introduce-an-event-bus-rabbitmq.md)
 * Date: 2026-11-20
 
 ## Context and Problem Statement
