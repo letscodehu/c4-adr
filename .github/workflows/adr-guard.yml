@@ -1,0 +1,114 @@
+name: adr-guard
+
+# A pull request that changes the C4 model must add or modify an ADR, and a pull
+# request that adds or modifies an ADR must change the model. See README.md,
+# "How the CI works".
+
+on:
+  pull_request:
+
+env:
+  WORKSPACE: docs/architecture/workspace.dsl
+  DECISIONS_DIR: docs/architecture/decisions
+  SCRIPTS_DIR: .github/scripts
+  STRUCTURIZR_CLI_IMAGE: structurizr/cli:2025.11.09
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: model-diff tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run unit tests
+        run: python3 -m unittest discover -s "$SCRIPTS_DIR/tests" -v
+
+  adr-guard:
+    name: adr-guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Export base and head workspaces
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          base_rev="$(git merge-base "origin/$BASE_REF" HEAD)"
+          "$SCRIPTS_DIR/export-workspace.sh" "$base_rev" json "$RUNNER_TEMP/base"
+          "$SCRIPTS_DIR/export-workspace.sh" --working-tree json "$RUNNER_TEMP/head"
+
+      - name: Check that model and ADR changes go together
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          json="$(basename "$WORKSPACE" .dsl).json"
+
+          set +e
+          "$SCRIPTS_DIR/model-diff" "$RUNNER_TEMP/base/$json" "$RUNNER_TEMP/head/$json" > "$RUNNER_TEMP/model-diff.txt"
+          model_status=$?
+          set -e
+          if [ "$model_status" -eq 2 ]; then
+            echo "::error::model-diff failed"
+            exit 2
+          fi
+
+          git diff --name-only --diff-filter=AM "origin/$BASE_REF...HEAD" -- "$DECISIONS_DIR/" > "$RUNNER_TEMP/adrs.txt"
+
+          model_changed=$([ "$model_status" -eq 1 ] && echo true || echo false)
+          adr_changed=$([ -s "$RUNNER_TEMP/adrs.txt" ] && echo true || echo false)
+
+          case "$model_changed/$adr_changed" in
+            true/true)
+              result=pass
+              verdict="PASS: the model changed and the pull request adds or modifies an ADR."
+              advice="" ;;
+            false/false)
+              result=pass
+              verdict="PASS: neither the model nor any ADR changed."
+              advice="" ;;
+            true/false)
+              result=fail
+              verdict="FAIL: the model changed, but no ADR was added or modified in $DECISIONS_DIR/."
+              advice="Every model change needs a decision. Add a new ADR (\`$DECISIONS_DIR/NNNN-kebab-title.md\`, MADR format) that explains why the model changes, or update the ADR this change implements. If the model change was not intended, revert it." ;;
+            false/true)
+              result=fail
+              verdict="FAIL: an ADR was added or modified, but the model did not change."
+              advice="ADRs and the model change together. Add the model change the decision drives to \`$WORKSPACE\` in this pull request, or move the ADR edit into the pull request that changes the model. Only views and styles changed? Those do not count as a model change." ;;
+          esac
+
+          # The first line of the log is the verdict.
+          if [ "$result" = pass ]; then echo "$verdict"; else echo "::error title=adr-guard::$verdict"; fi
+          echo
+          cat "$RUNNER_TEMP/model-diff.txt"
+          echo
+          if [ "$adr_changed" = true ]; then
+            echo "ADRs added or modified:"
+            sed 's/^/  /' "$RUNNER_TEMP/adrs.txt"
+          else
+            echo "No ADR added or modified."
+          fi
+          if [ -n "$advice" ]; then echo; echo "What to do: $advice"; fi
+
+          {
+            if [ "$result" = pass ]; then echo "## :white_check_mark: adr-guard passed"; else echo "## :x: adr-guard failed"; fi
+            echo
+            echo "**$verdict**"
+            if [ -n "$advice" ]; then echo; echo "**What to do:** $advice"; fi
+            echo
+            echo "### Model changes"
+            echo
+            echo '```diff'
+            cat "$RUNNER_TEMP/model-diff.txt"
+            echo '```'
+            echo
+            echo "### ADRs added or modified"
+            echo
+            if [ "$adr_changed" = true ]; then sed 's/^\(.*\)$/- `\1`/' "$RUNNER_TEMP/adrs.txt"; else echo "_None._"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          [ "$result" = pass ]

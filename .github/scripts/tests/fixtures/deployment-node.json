@@ -1,0 +1,244 @@
+{
+  "configuration" : { },
+  "description" : "Base model for the model-diff tests.",
+  "documentation" : { },
+  "id" : 0,
+  "model" : {
+    "deploymentNodes" : [ {
+      "children" : [ {
+        "containerInstances" : [ {
+          "containerId" : "3",
+          "deploymentGroups" : [ "Default" ],
+          "environment" : "Production",
+          "id" : "16",
+          "instanceId" : 1,
+          "properties" : {
+            "structurizr.dsl.identifier" : "production.aws.ec2.webInstance"
+          },
+          "relationships" : [ {
+            "description" : "Calls",
+            "destinationId" : "17",
+            "id" : "18",
+            "linkedRelationshipId" : "10",
+            "sourceId" : "16",
+            "technology" : "JSON/HTTPS"
+          } ],
+          "tags" : "Container Instance"
+        }, {
+          "containerId" : "4",
+          "deploymentGroups" : [ "Default" ],
+          "environment" : "Production",
+          "id" : "17",
+          "instanceId" : 1,
+          "properties" : {
+            "structurizr.dsl.identifier" : "production.aws.ec2.apiInstance"
+          },
+          "tags" : "Container Instance"
+        } ],
+        "environment" : "Production",
+        "id" : "15",
+        "instances" : "1",
+        "name" : "EC2",
+        "properties" : {
+          "structurizr.dsl.identifier" : "production.aws.ec2"
+        },
+        "tags" : "Element,Deployment Node",
+        "technology" : "Ubuntu"
+      }, {
+        "environment" : "Production",
+        "id" : "19",
+        "instances" : "1",
+        "name" : "RDS",
+        "properties" : {
+          "structurizr.dsl.identifier" : "production.aws.rds"
+        },
+        "tags" : "Element,Deployment Node",
+        "technology" : "PostgreSQL"
+      } ],
+      "environment" : "Production",
+      "id" : "13",
+      "infrastructureNodes" : [ {
+        "environment" : "Production",
+        "id" : "14",
+        "name" : "Load Balancer",
+        "properties" : {
+          "structurizr.dsl.identifier" : "production.aws.lb"
+        },
+        "relationships" : [ {
+          "description" : "Forwards requests to",
+          "destinationId" : "16",
+          "id" : "20",
+          "sourceId" : "14",
+          "tags" : "Relationship"
+        } ],
+        "tags" : "Element,Infrastructure Node",
+        "technology" : "ALB"
+      } ],
+      "instances" : "1",
+      "name" : "AWS",
+      "properties" : {
+        "structurizr.dsl.identifier" : "production.aws"
+      },
+      "tags" : "Element,Deployment Node",
+      "technology" : "Amazon Web Services"
+    } ],
+    "people" : [ {
+      "description" : "Places orders.",
+      "id" : "1",
+      "name" : "Customer",
+      "properties" : {
+        "structurizr.dsl.identifier" : "customer"
+      },
+      "relationships" : [ {
+        "description" : "Places orders using",
+        "destinationId" : "3",
+        "id" : "7",
+        "sourceId" : "1",
+        "tags" : "Relationship",
+        "technology" : "HTTPS"
+      }, {
+        "description" : "Places orders using",
+        "destinationId" : "2",
+        "id" : "8",
+        "linkedRelationshipId" : "7",
+        "sourceId" : "1",
+        "technology" : "HTTPS"
+      } ],
+      "tags" : "Element,Person"
+    } ],
+    "softwareSystems" : [ {
+      "containers" : [ {
+        "description" : "Storefront.",
+        "documentation" : { },
+        "id" : "3",
+        "name" : "Web App",
+        "properties" : {
+          "structurizr.dsl.identifier" : "webshop.web"
+        },
+        "relationships" : [ {
+          "description" : "Calls",
+          "destinationId" : "5",
+          "id" : "9",
+          "sourceId" : "3",
+          "tags" : "Relationship",
+          "technology" : "JSON/HTTPS"
+        }, {
+          "description" : "Calls",
+          "destinationId" : "4",
+          "id" : "10",
+          "linkedRelationshipId" : "9",
+          "sourceId" : "3",
+          "technology" : "JSON/HTTPS"
+        } ],
+        "tags" : "Element,Container",
+        "technology" : "React"
+      }, {
+        "components" : [ {
+          "description" : "Handles orders.",
+          "documentation" : { },
+          "id" : "5",
+          "name" : "Orders",
+          "properties" : {
+            "structurizr.dsl.identifier" : "webshop.api.orders"
+          },
+          "tags" : "Element,Component",
+          "technology" : "Spring"
+        } ],
+        "description" : "Order API.",
+        "documentation" : { },
+        "id" : "4",
+        "name" : "API",
+        "properties" : {
+          "structurizr.dsl.identifier" : "webshop.api"
+        },
+        "relationships" : [ {
+          "description" : "Sends emails using",
+          "destinationId" : "6",
+          "id" : "11",
+          "sourceId" : "4",
+          "tags" : "Relationship"
+        } ],
+        "tags" : "Element,Container",
+        "technology" : "Java"
+      } ],
+      "description" : "Sells products.",
+      "documentation" : { },
+      "id" : "2",
+      "name" : "Webshop",
+      "properties" : {
+        "structurizr.dsl.identifier" : "webshop"
+      },
+      "relationships" : [ {
+        "description" : "Sends emails using",
+        "destinationId" : "6",
+        "id" : "12",
+        "linkedRelationshipId" : "11",
+        "sourceId" : "2"
+      } ],
+      "tags" : "Element,Software System"
+    }, {
+      "description" : "Delivers emails.",
+      "documentation" : { },
+      "id" : "6",
+      "name" : "Email Service",
+      "properties" : {
+        "structurizr.dsl.identifier" : "email"
+      },
+      "tags" : "Element,Software System,External,Third Party"
+    } ]
+  },
+  "name" : "Fixture",
+  "properties" : {
+    "structurizr.inspection.error" : "20",
+    "structurizr.dsl" : "d29ya3NwYWNlICJGaXh0dXJlIiAiQmFzZSBtb2RlbCBmb3IgdGhlIG1vZGVsLWRpZmYgdGVzdHMuIiB7CgogICAgIWlkZW50aWZpZXJzIGhpZXJhcmNoaWNhbAoKICAgIG1vZGVsIHsKICAgICAgICBjdXN0b21lciA9IHBlcnNvbiAiQ3VzdG9tZXIiICJQbGFjZXMgb3JkZXJzLiIKCiAgICAgICAgd2Vic2hvcCA9IHNvZnR3YXJlU3lzdGVtICJXZWJzaG9wIiAiU2VsbHMgcHJvZHVjdHMuIiB7CiAgICAgICAgICAgIHdlYiA9IGNvbnRhaW5lciAiV2ViIEFwcCIgIlN0b3JlZnJvbnQuIiAiUmVhY3QiCiAgICAgICAgICAgIGFwaSA9IGNvbnRhaW5lciAiQVBJIiAiT3JkZXIgQVBJLiIgIkphdmEiIHsKICAgICAgICAgICAgICAgIG9yZGVycyA9IGNvbXBvbmVudCAiT3JkZXJzIiAiSGFuZGxlcyBvcmRlcnMuIiAiU3ByaW5nIgogICAgICAgICAgICB9CiAgICAgICAgfQoKICAgICAgICBlbWFpbCA9IHNvZnR3YXJlU3lzdGVtICJFbWFpbCBTZXJ2aWNlIiAiRGVsaXZlcnMgZW1haWxzLiIgewogICAgICAgICAgICB0YWdzICJFeHRlcm5hbCIgIlRoaXJkIFBhcnR5IgogICAgICAgIH0KCiAgICAgICAgY3VzdG9tZXIgLT4gd2Vic2hvcC53ZWIgIlBsYWNlcyBvcmRlcnMgdXNpbmciICJIVFRQUyIKICAgICAgICB3ZWJzaG9wLndlYiAtPiB3ZWJzaG9wLmFwaS5vcmRlcnMgIkNhbGxzIiAiSlNPTi9IVFRQUyIKICAgICAgICB3ZWJzaG9wLmFwaSAtPiBlbWFpbCAiU2VuZHMgZW1haWxzIHVzaW5nIgoKICAgICAgICBwcm9kdWN0aW9uID0gZGVwbG95bWVudEVudmlyb25tZW50ICJQcm9kdWN0aW9uIiB7CiAgICAgICAgICAgIGF3cyA9IGRlcGxveW1lbnROb2RlICJBV1MiICIiICJBbWF6b24gV2ViIFNlcnZpY2VzIiB7CiAgICAgICAgICAgICAgICBsYiA9IGluZnJhc3RydWN0dXJlTm9kZSAiTG9hZCBCYWxhbmNlciIgIiIgIkFMQiIKICAgICAgICAgICAgICAgIGVjMiA9IGRlcGxveW1lbnROb2RlICJFQzIiICIiICJVYnVudHUiIHsKICAgICAgICAgICAgICAgICAgICB3ZWJJbnN0YW5jZSA9IGNvbnRhaW5lckluc3RhbmNlIHdlYnNob3Aud2ViCiAgICAgICAgICAgICAgICAgICAgYXBpSW5zdGFuY2UgPSBjb250YWluZXJJbnN0YW5jZSB3ZWJzaG9wLmFwaQogICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgcmRzID0gZGVwbG95bWVudE5vZGUgIlJEUyIgIiIgIlBvc3RncmVTUUwiCiAgICAgICAgICAgICAgICBsYiAtPiBlYzIud2ViSW5zdGFuY2UgIkZvcndhcmRzIHJlcXVlc3RzIHRvIgogICAgICAgICAgICB9CiAgICAgICAgfQogICAgfQoKICAgIHZpZXdzIHsKICAgICAgICBzeXN0ZW1Db250ZXh0IHdlYnNob3AgIlN5c3RlbUNvbnRleHQiIHsKICAgICAgICAgICAgaW5jbHVkZSAqCiAgICAgICAgICAgIGF1dG9sYXlvdXQgbHIKICAgICAgICB9CgogICAgICAgIHN0eWxlcyB7CiAgICAgICAgICAgIGVsZW1lbnQgIlBlcnNvbiIgewogICAgICAgICAgICAgICAgc2hhcGUgUGVyc29uCiAgICAgICAgICAgIH0KICAgICAgICB9CiAgICB9Cgp9",
+    "structurizr.inspection.info" : "0",
+    "structurizr.inspection.ignore" : "0",
+    "structurizr.inspection.warning" : "0"
+  },
+  "views" : {
+    "configuration" : {
+      "branding" : { },
+      "styles" : {
+        "elements" : [ {
+          "shape" : "Person",
+          "tag" : "Person"
+        } ]
+      },
+      "terminology" : { }
+    },
+    "systemContextViews" : [ {
+      "automaticLayout" : {
+        "applied" : false,
+        "edgeSeparation" : 0,
+        "implementation" : "Graphviz",
+        "nodeSeparation" : 300,
+        "rankDirection" : "LeftRight",
+        "rankSeparation" : 300,
+        "vertices" : false
+      },
+      "elements" : [ {
+        "id" : "1",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "2",
+        "x" : 0,
+        "y" : 0
+      }, {
+        "id" : "6",
+        "x" : 0,
+        "y" : 0
+      } ],
+      "enterpriseBoundaryVisible" : true,
+      "key" : "SystemContext",
+      "name" : "System Context View: Webshop",
+      "order" : 1,
+      "relationships" : [ {
+        "id" : "12"
+      }, {
+        "id" : "8"
+      } ],
+      "softwareSystemId" : "2"
+    } ]
+  }
+}
