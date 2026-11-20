@@ -1,0 +1,6 @@
+@startuml
+title Container View: Webshop
+rectangle "API" as API
+rectangle "Database" as Database
+API --> Database : "Reads from and writes to"
+@enduml

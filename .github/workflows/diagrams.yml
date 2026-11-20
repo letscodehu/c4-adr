@@ -1,0 +1,96 @@
+name: diagrams
+
+# Renders every view of the base and the head workspace of a pull request, and
+# keeps one bot comment on the pull request up to date with Before / After
+# images of the views that differ. Images go to the workflow artifact and to the
+# orphan `diagram-previews` branch, never to `main`. See README.md,
+# "How the CI works".
+
+on:
+  pull_request:
+
+env:
+  WORKSPACE: docs/architecture/workspace.dsl
+  SCRIPTS_DIR: .github/scripts
+  STRUCTURIZR_CLI_IMAGE: structurizr/cli:2025.11.09
+  PLANTUML_IMAGE: plantuml/plantuml:1.2026.9
+  PREVIEW_BRANCH: diagram-previews
+  COMMENT_MARKER: "<!-- diagram-preview -->"  # first line of the comment, see preview-comment
+
+permissions:
+  contents: write       # push the images to the diagram-previews branch
+  pull-requests: write  # create / update the preview comment
+
+concurrency:
+  group: diagrams-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  diagrams:
+    name: Diagram preview
+    # Pull requests from forks get a read-only token and cannot push or comment.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Render base and head views
+        id: render
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          base_rev="$(git merge-base "origin/$BASE_REF" HEAD)"
+          "$SCRIPTS_DIR/render-views" "$base_rev" "$RUNNER_TEMP/diagrams/base"
+          "$SCRIPTS_DIR/render-views" --working-tree "$RUNNER_TEMP/diagrams/head"
+
+          head_short="${HEAD_SHA:0:7}"
+          {
+            echo "base-short=${base_rev:0:7}"
+            echo "head-short=$head_short"
+            echo "dest=pr-$PR_NUMBER/$head_short"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload rendered diagrams
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagrams-pr-${{ github.event.pull_request.number }}-${{ steps.render.outputs.head-short }}
+          path: ${{ runner.temp }}/diagrams
+          if-no-files-found: error
+
+      - name: Publish images to the ${{ env.PREVIEW_BRANCH }} branch
+        env:
+          DEST: ${{ steps.render.outputs.dest }}
+        run: '"$SCRIPTS_DIR/publish-previews" "$RUNNER_TEMP/diagrams" "$DEST"'
+
+      - name: Create or update the preview comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          DEST: ${{ steps.render.outputs.dest }}
+          BASE_SHORT: ${{ steps.render.outputs.base-short }}
+          HEAD_SHORT: ${{ steps.render.outputs.head-short }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          url="https://raw.githubusercontent.com/$REPO/$PREVIEW_BRANCH/$DEST"
+          "$SCRIPTS_DIR/preview-comment" \
+            "$RUNNER_TEMP/diagrams/base" "$RUNNER_TEMP/diagrams/head" \
+            "$url/base" "$url/head" \
+            --base-rev "$BASE_SHORT" --head-rev "$HEAD_SHORT" --run-url "$RUN_URL" \
+            > "$RUNNER_TEMP/comment.md"
+          cat "$RUNNER_TEMP/comment.md" >> "$GITHUB_STEP_SUMMARY"
+
+          comment_id="$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments" \
+            --jq "[.[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$COMMENT_MARKER\")))][0].id // empty" \
+            | head -n 1)"
+          if [ -n "$comment_id" ]; then
+            echo "Updating comment $comment_id"
+            gh api --method PATCH "repos/$REPO/issues/comments/$comment_id" -F "body=@$RUNNER_TEMP/comment.md" > /dev/null
+          else
+            echo "Creating comment"
+            gh api --method POST "repos/$REPO/issues/$PR_NUMBER/comments" -F "body=@$RUNNER_TEMP/comment.md" > /dev/null
+          fi

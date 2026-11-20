@@ -1,0 +1,4 @@
+@startuml
+title Deployment View: Webshop - Live
+node "Cloud" as Cloud
+@enduml

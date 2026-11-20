@@ -36,13 +36,19 @@ docs/
     validate.yml             # validates the DSL on every pull request and push to main
     pages.yml                # builds the Structurizr site and deploys it to GitHub Pages
     adr-guard.yml            # fails a pull request that changes the model without an ADR, or vice versa
+    diagrams.yml             # renders the views and comments Before / After images on every pull request
   scripts/
     export-workspace.sh      # exports the workspace of any git revision with the Structurizr CLI
     model-diff               # compares the C4 model of two JSON exports
-    tests/                   # unit tests and fixtures for model-diff
+    render-views             # renders every view of a git revision to PNG and SVG
+    publish-previews         # pushes rendered images to the orphan diagram-previews branch
+    preview-comment          # builds the Before / After diagram preview comment
+    tests/                   # unit tests and fixtures for model-diff and preview-comment
 ```
 
-Rendered images are never committed. They are produced by CI and published to GitHub Pages.
+Rendered images are never committed to `main`. They are produced by CI and published to
+GitHub Pages, to workflow artifacts and to the orphan `diagram-previews` branch (see
+[diagrams](#diagrams)).
 
 ## How the CI works
 
@@ -50,7 +56,8 @@ Rendered images are never committed. They are produced by CI and published to Gi
 | --- | --- | --- |
 | `validate` | every pull request, push to `main` | Validates `workspace.dsl` with the Structurizr CLI. |
 | `pages` | push to `main` | Builds the Structurizr site and deploys it to GitHub Pages. |
-| `adr-guard` | every pull request | Checks that model changes and ADR changes go together (see below), and runs the `model-diff` unit tests. |
+| `adr-guard` | every pull request | Checks that model changes and ADR changes go together (see below), and runs the unit tests of the CI scripts. |
+| `diagrams` | every pull request | Renders every view before and after the pull request, and keeps one bot comment with Before / After images up to date (see below). |
 
 ### adr-guard
 
@@ -110,6 +117,62 @@ python3 -m unittest discover -s .github/scripts/tests -v
 .github/scripts/export-workspace.sh origin/main json build/base
 .github/scripts/export-workspace.sh --working-tree json build/head
 .github/scripts/model-diff build/base/workspace.json build/head/workspace.json
+```
+
+### diagrams
+
+Every pull request gets **one** bot comment, *Diagram preview*, that shows what the
+pull request does to the diagrams. Every push to the pull request updates the same
+comment with the new images instead of adding another one.
+
+- A view that **changed** gets a two-column table: **Before** (the base branch) and
+  **After** (the pull request).
+- A **new view** says "new view" in the Before column, a **removed** view says
+  "removed" in the After column.
+- Unchanged views are collapsed in a `<details>` block at the end.
+- If nothing changed, the comment says **No diagram changes**.
+
+How it works:
+
+1. `.github/scripts/render-views` renders every view of the base revision (the merge
+   base with the target branch, the same one adr-guard uses) and of the pull request.
+   It exports the workspace with `export-workspace.sh` as `plantuml/structurizr`
+   (this flavour keeps the colours and shapes of the workspace `styles`) and renders
+   each view to PNG and SVG with the `plantuml/plantuml` Docker image.
+2. A view counts as changed when its PlantUML source differs, so anything drawn on it
+   counts: elements, relationships, descriptions, styles, layout, title.
+3. All PNG, SVG and PlantUML files are uploaded as the
+   `diagrams-pr-<number>-<short-sha>` **workflow artifact**: open the run from the
+   comment's footer link (or the PR's Checks tab) to download them.
+4. `.github/scripts/publish-previews` pushes the images to the **orphan
+   `diagram-previews` branch**, to `pr-<number>/<short-sha>/base/<view-key>.png` and
+   `pr-<number>/<short-sha>/head/<view-key>.png` (and `.svg`). If several pull requests
+   push at the same time, a rejected push is rebuilt on the new tip of the branch and
+   retried. The workflow creates the branch on its first run.
+5. `.github/scripts/preview-comment` builds the comment, with images linked from
+   `https://raw.githubusercontent.com/letscodehu/c4-adr/diagram-previews/...`. The
+   workflow finds its earlier comment by the hidden `<!-- diagram-preview -->` marker
+   and edits it, or creates it on the first run.
+
+**Why no images on `main`?** Generated files in the main history only add noise: every
+model change would come with binary diffs, and the images could drift from the DSL
+they were rendered from. The DSL is the source of truth; images are build output. The
+comment still needs a stable URL for each image, and a workflow artifact cannot be
+embedded in a comment, so the images live on `diagram-previews`, a branch that shares
+no history with `main` and is never merged. Each push gets its own `<short-sha>`
+folder, so older comment versions keep their images.
+
+Not covered (yet): pull requests from forks (their token cannot push or comment, so the
+job is skipped) and cleaning up `diagram-previews` after pull requests are closed.
+
+Render the views and build the comment locally (Docker and Python 3 needed):
+
+```sh
+python3 -m unittest discover -s .github/scripts/tests -v
+
+.github/scripts/render-views origin/main build/diagrams/base
+.github/scripts/render-views --working-tree build/diagrams/head
+.github/scripts/preview-comment build/diagrams/base build/diagrams/head base head
 ```
 
 ## Walkthrough

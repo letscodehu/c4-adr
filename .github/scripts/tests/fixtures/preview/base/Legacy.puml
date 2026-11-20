@@ -1,0 +1,4 @@
+@startuml
+title System Landscape View
+rectangle "Webshop" as Webshop
+@enduml
