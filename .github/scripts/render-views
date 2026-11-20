@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Render every view of the Structurizr workspace of a git revision to PNG and SVG.
+#
+# Usage: render-views <git-rev | --working-tree> <output-dir>
+#
+# Writes, for every view in the workspace (the view key is the file name):
+#   <output-dir>/<view-key>.puml   PlantUML source, used to detect changes
+#   <output-dir>/<view-key>.png
+#   <output-dir>/<view-key>.svg
+#
+# How: export-workspace.sh exports the workspace with the Structurizr CLI as
+# `plantuml/structurizr` (this flavour keeps the colours and shapes of the
+# workspace `styles`), then the PlantUML Docker image renders each view. The
+# separate legend diagrams the exporter writes (`*-key.puml`) are skipped.
+#
+# Environment (all have defaults, override them from the workflow `env`):
+#   WORKSPACE, STRUCTURIZR_CLI_IMAGE   see export-workspace.sh
+#   PLANTUML_IMAGE                     Docker image of PlantUML
+set -euo pipefail
+
+if [ "$#" -ne 2 ]; then
+  echo "usage: $0 <git-rev | --working-tree> <output-dir>" >&2
+  exit 2
+fi
+
+rev="$1"
+output_dir="$2"
+
+PLANTUML_IMAGE="${PLANTUML_IMAGE:-plantuml/plantuml:1.2026.9}"
+
+scripts_dir="$(cd "$(dirname "$0")" && pwd)"
+mkdir -p "$output_dir"
+output_dir="$(cd "$output_dir" && pwd)"
+
+export_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/render-views.XXXXXX")"
+trap 'rm -rf "$export_dir"' EXIT
+
+"$scripts_dir/export-workspace.sh" "$rev" plantuml/structurizr "$export_dir"
+
+count=0
+for file in "$export_dir"/structurizr-*.puml; do
+  [ -e "$file" ] || continue
+  case "$file" in *-key.puml) continue ;; esac
+  key="$(basename "$file" .puml)"
+  key="${key#structurizr-}"
+  cp "$file" "$output_dir/$key.puml"
+  count=$((count + 1))
+done
+
+if [ "$count" -eq 0 ]; then
+  echo "No views to render." >&2
+  exit 0
+fi
+
+echo "Rendering $count view(s) into $output_dir" >&2
+for format in png svg; do
+  docker run --rm \
+    --user "$(id -u):$(id -g)" \
+    -v "$output_dir:/data" \
+    "$PLANTUML_IMAGE" \
+    "-t$format" -failfast2 '/data/*.puml' >&2
+done

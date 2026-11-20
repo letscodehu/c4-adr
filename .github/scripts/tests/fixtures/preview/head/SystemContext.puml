@@ -1,0 +1,6 @@
+@startuml
+title System Context View: Webshop
+rectangle "Customer" as Customer
+rectangle "Webshop" as Webshop
+Customer --> Webshop : "Browses products and places orders using"
+@enduml

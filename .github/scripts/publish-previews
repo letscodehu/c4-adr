@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Commit rendered diagrams to the orphan preview branch and push it.
+#
+# Usage: publish-previews <source-dir> <dest-path>
+#
+#   <source-dir>  directory with the rendered images (e.g. base/ and head/ from
+#                 render-views); only *.png and *.svg files are published.
+#   <dest-path>   directory on the preview branch, e.g. pr-42/1a2b3c4. Its
+#                 previous content (if any) is replaced.
+#
+# The preview branch (PREVIEW_BRANCH, default `diagram-previews`) shares no
+# history with `main`, so images never end up on `main`. If the branch does not
+# exist yet, it is created as an orphan branch with no files.
+#
+# Several pull requests can publish at the same time. When the push is rejected
+# because the branch moved (or another run created it first), the commit is
+# rebuilt on the new tip of the branch and pushed again, up to MAX_ATTEMPTS
+# times. Every run writes to its own <dest-path>, so this never conflicts.
+#
+# Pushes with the credentials of the checkout (GITHUB_TOKEN in the workflow).
+set -euo pipefail
+
+if [ "$#" -ne 2 ]; then
+  echo "usage: $0 <source-dir> <dest-path>" >&2
+  exit 2
+fi
+
+source_dir="$(cd "$1" && pwd)"
+dest_path="$2"
+PREVIEW_BRANCH="${PREVIEW_BRANCH:-diagram-previews}"
+REMOTE="${REMOTE:-origin}"
+MAX_ATTEMPTS="${MAX_ATTEMPTS:-5}"
+
+repo_root="$(git rev-parse --show-toplevel)"
+tmp="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/publish-previews.XXXXXX")"
+work="$tmp/branch"
+local_branch="publish-previews-$$"
+
+cleanup() {
+  git -C "$repo_root" worktree remove --force "$work" >/dev/null 2>&1 || true
+  git -C "$repo_root" branch -D "$local_branch" >/dev/null 2>&1 || true
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
+
+attempt=1
+while :; do
+  cleanup
+  mkdir -p "$tmp"
+
+  if git -C "$repo_root" fetch --quiet --depth 1 "$REMOTE" "refs/heads/$PREVIEW_BRANCH" 2>/dev/null; then
+    git -C "$repo_root" worktree add --quiet -b "$local_branch" "$work" FETCH_HEAD
+  else
+    echo "$PREVIEW_BRANCH does not exist yet, creating it as an orphan branch" >&2
+    git -C "$repo_root" worktree add --quiet --detach "$work"
+    git -C "$work" switch --quiet --orphan "$local_branch"
+  fi
+
+  rm -rf "${work:?}/$dest_path"
+  mkdir -p "$work/$dest_path"
+  (
+    cd "$source_dir"
+    find . -type f \( -name '*.png' -o -name '*.svg' \) | while read -r file; do
+      mkdir -p "$work/$dest_path/$(dirname "$file")"
+      cp "$file" "$work/$dest_path/$file"
+    done
+  )
+
+  git -C "$work" add --all
+  if git -C "$work" rev-parse --verify --quiet HEAD >/dev/null && git -C "$work" diff --cached --quiet; then
+    echo "Nothing new to publish in $dest_path" >&2
+    exit 0
+  fi
+  git -C "$work" \
+    -c user.name="github-actions[bot]" \
+    -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+    commit --quiet --allow-empty -m "Diagram previews for $dest_path"
+
+  if git -C "$work" push --quiet "$REMOTE" "HEAD:refs/heads/$PREVIEW_BRANCH"; then
+    echo "Published $dest_path to $PREVIEW_BRANCH" >&2
+    exit 0
+  fi
+
+  if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
+    echo "error: could not push to $PREVIEW_BRANCH after $attempt attempts" >&2
+    exit 1
+  fi
+  echo "Push rejected, $PREVIEW_BRANCH moved. Retrying on its new tip ($attempt/$MAX_ATTEMPTS)." >&2
+  attempt=$((attempt + 1))
+  sleep $((attempt * 2))
+done

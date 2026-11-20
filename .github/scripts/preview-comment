@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""Build the diagram preview comment of a pull request.
+
+Usage: preview-comment BASE_DIR HEAD_DIR BASE_URL HEAD_URL
+                       [--base-rev REV] [--head-rev REV] [--run-url URL]
+
+BASE_DIR and HEAD_DIR are output directories of `render-views`: one
+`<view-key>.puml` (plus `.png` and `.svg`) per view. BASE_URL and HEAD_URL are
+where the PNGs of those directories are published (`<URL>/<view-key>.png`).
+
+Prints the comment in GitHub Markdown. The first line is the hidden marker
+(MARKER) the workflow uses to find and update the comment on later pushes.
+
+A view is compared by its PlantUML source, so a view counts as changed when
+anything drawn on it changes (elements, relationships, descriptions, styles,
+layout direction, title). Statuses:
+- changed:   in base and head, source differs  -> Before / After images
+- new:       only in head                      -> Before says "new view"
+- removed:   only in base                      -> After says "removed"
+- unchanged: in base and head, same source     -> collapsed in <details>
+If no view is changed, new or removed, the comment says "No diagram changes".
+"""
+
+import argparse
+import pathlib
+import sys
+
+MARKER = "<!-- diagram-preview -->"
+
+CHANGED = "changed"
+NEW = "new"
+REMOVED = "removed"
+UNCHANGED = "unchanged"
+
+LABELS = {CHANGED: "changed", NEW: "new view", REMOVED: "removed"}
+
+
+def read_views(directory):
+    """Return {view key: PlantUML source} of a render-views output directory."""
+    return {
+        path.stem: path.read_text(encoding="utf-8")
+        for path in sorted(pathlib.Path(directory).glob("*.puml"))
+    }
+
+
+def compare(base, head):
+    """Return [(view key, status)] sorted by view key."""
+    result = []
+    for key in sorted(set(base) | set(head)):
+        if key not in base:
+            status = NEW
+        elif key not in head:
+            status = REMOVED
+        elif base[key] != head[key]:
+            status = CHANGED
+        else:
+            status = UNCHANGED
+        result.append((key, status))
+    return result
+
+
+def image(key, side, url):
+    return f"![{key} ({side})]({url.rstrip('/')}/{key}.png)"
+
+
+def build_comment(base, head, base_url, head_url, base_rev=None, head_rev=None, run_url=None):
+    views = compare(base, head)
+    visible = [(key, status) for key, status in views if status != UNCHANGED]
+    unchanged = [key for key, status in views if status == UNCHANGED]
+
+    lines = [MARKER, "## Diagram preview", ""]
+
+    if not visible:
+        lines.append(f"**No diagram changes.** None of the {len(views)} view(s) changed.")
+    else:
+        counts = ", ".join(
+            f"{sum(1 for _, s in visible if s == status)} {LABELS[status]}"
+            for status in (CHANGED, NEW, REMOVED)
+            if any(s == status for _, s in visible)
+        )
+        lines.append(f"**{len(visible)} of {len(views)} view(s) differ:** {counts}.")
+
+    for key, status in visible:
+        before = "_new view_" if status == NEW else image(key, "before", base_url)
+        after = "_removed_" if status == REMOVED else image(key, "after", head_url)
+        lines += [
+            "",
+            f"### {key} ({LABELS[status]})",
+            "",
+            "| Before | After |",
+            "| --- | --- |",
+            f"| {before} | {after} |",
+        ]
+
+    if unchanged:
+        lines += ["", "<details>", f"<summary>Unchanged views ({len(unchanged)})</summary>"]
+        for key in unchanged:
+            lines += ["", f"**{key}**", "", image(key, "unchanged", head_url)]
+        lines += ["", "</details>"]
+
+    footer = []
+    if base_rev and head_rev:
+        footer.append(f"Before: `{base_rev}` (base), after: `{head_rev}` (this pull request).")
+    if run_url:
+        footer.append(f"PNG and SVG files: the `diagrams-*` artifact of the [workflow run]({run_url}).")
+    footer.append("Images are stored on the `diagram-previews` branch, never on `main`.")
+    lines += ["", "---", "<sub>" + " ".join(footer) + "</sub>"]
+
+    return "\n".join(lines) + "\n"
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(prog="preview-comment", description=__doc__.splitlines()[0])
+    parser.add_argument("base_dir")
+    parser.add_argument("head_dir")
+    parser.add_argument("base_url")
+    parser.add_argument("head_url")
+    parser.add_argument("--base-rev")
+    parser.add_argument("--head-rev")
+    parser.add_argument("--run-url")
+    args = parser.parse_args(argv[1:])
+    for directory in (args.base_dir, args.head_dir):
+        if not pathlib.Path(directory).is_dir():
+            print(f"error: {directory} is not a directory", file=sys.stderr)
+            return 2
+    sys.stdout.write(
+        build_comment(
+            read_views(args.base_dir),
+            read_views(args.head_dir),
+            args.base_url,
+            args.head_url,
+            args.base_rev,
+            args.head_rev,
+            args.run_url,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
