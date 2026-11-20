@@ -17,6 +17,10 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
                 inventory = component "Inventory" "Stock levels and stock reservations for orders." "Module"
                 customerAccounts = component "Customer Accounts" "Registration, sign-in and customer profiles." "Module"
             }
+
+            database = container "Database" "Stores products, orders, stock levels and customer accounts, one schema per module." "PostgreSQL" {
+                tags "Database"
+            }
         }
 
         emailService = softwareSystem "Email Service" "Third-party service that delivers transactional emails." {
@@ -33,6 +37,28 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
         webshop.monolith.order -> webshop.monolith.customerAccounts "Gets customer and delivery details from" "In-process call"
         webshop.monolith.order -> emailService "Sends order confirmation emails using" "HTTPS"
         emailService -> customer "Delivers emails to"
+
+        webshop.monolith -> webshop.database "Reads from and writes to" "SQL/TCP"
+
+        production = deploymentEnvironment "Production" {
+            deploymentNode "Customer's Computer" "The customer's desktop or mobile device." {
+                deploymentNode "Web Browser" "" "Chrome, Firefox, Safari or Edge" {
+                    containerInstance webshop.webApp
+                }
+            }
+
+            deploymentNode "Cloud" "Public cloud region that hosts the Webshop." {
+                deploymentNode "Kubernetes Cluster" "Managed Kubernetes cluster." "Kubernetes" {
+                    deploymentNode "Webshop Monolith Pod" "" "Docker container" 2 {
+                        containerInstance webshop.monolith
+                    }
+                }
+
+                deploymentNode "Managed PostgreSQL" "Managed database service: automated backups, point-in-time recovery, encryption at rest and a standby replica." "PostgreSQL" {
+                    containerInstance webshop.database
+                }
+            }
+        }
     }
 
     views {
@@ -45,13 +71,19 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
         container webshop "Containers" {
             include *
             autolayout lr
-            description "The Container view of the Webshop: a single-page application and a modular monolith (ADR-0002)."
+            description "The Container view of the Webshop: a single-page application, a modular monolith (ADR-0002) and its PostgreSQL database (ADR-0003)."
         }
 
         component webshop.monolith "Components" {
             include *
             autolayout lr
             description "The Component view of the Webshop Monolith: its business modules (ADR-0002)."
+        }
+
+        deployment webshop "Production" "Deployment" {
+            include *
+            autolayout lr
+            description "The Production Deployment view of the Webshop: the monolith on Kubernetes and a managed PostgreSQL database (ADR-0003)."
         }
 
         styles {
@@ -77,6 +109,12 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
             element "Component" {
                 background #85bbf0
                 color #000000
+            }
+            element "Database" {
+                shape Cylinder
+            }
+            element "Deployment Node" {
+                color #444444
             }
         }
     }
