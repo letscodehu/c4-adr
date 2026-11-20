@@ -16,6 +16,177 @@ Three ideas run through the whole repository:
 
 There is no application code here, only documentation and CI.
 
+## Walkthrough
+
+> ⏱️ **Estimated time: 10–15 minutes.** Read this section top to bottom and open each
+> link as you go. Every step is one pull request, in ADR order.
+
+### Two ideas in two minutes
+
+**The C4 model** is a way to draw software architecture at four zoom levels, like a map
+you can zoom into: **Context** (the system and the people and systems around it),
+**Containers** (the applications and databases it is made of), **Components** (the
+modules inside one container) and **Code**. Instead of one big diagram, you get a few
+small ones, each answering one question. Here the model is written as text in
+[Structurizr DSL](https://docs.structurizr.com/dsl), and the diagrams are generated from it.
+
+**An Architecture Decision Record (ADR)** is a short text file that records one
+important decision: the context (what problem we had), the options we considered, what
+we decided and what it costs us. ADRs are numbered and never deleted. When a decision
+changes, a new ADR *supersedes* the old one, so you can always see why the system looks
+the way it does. This repository uses the [MADR](https://adr.github.io/madr/) format.
+
+The point of this repository is that the two belong together: the ADR says **why**, the
+C4 diagram shows **what** changed, and both arrive in the same pull request.
+
+### What to look for in each pull request
+
+Every pull request below has the same four parts. Open them in this order:
+
+1. **The ADR**: the new file in `docs/architecture/decisions/` (*Files changed* tab).
+   Read the context, the options and the consequences.
+2. **The DSL diff**: the change to `docs/architecture/workspace.dsl` in the same tab.
+   This is the model change the decision drives.
+3. **The bot comment**, *Diagram preview* (*Conversation* tab): **Before** and
+   **After** images of every view that changed, rendered by CI. You don't need to read
+   the DSL to see what changed.
+4. **The review comments**: a tech lead, an SRE lead and a security lead each look at
+   the same decision from their own angle, the way a real architecture review works.
+
+### Step 1: ADR-0001, record architecture decisions
+
+The first commit on `main`: the walking skeleton, merged in
+[PR #13](https://github.com/letscodehu/c4-adr/pull/13). It adds
+[ADR-0001](https://github.com/letscodehu/c4-adr/blob/main/docs/architecture/decisions/0001-record-architecture-decisions.md)
+("we will record architecture decisions as ADRs"), the first C4 view (System Context:
+a customer, the Webshop and an Email Service), the `validate` CI and the GitHub Pages
+site.
+
+**Look at:** how short the ADR is, and the System Context view: the whole system is
+one box. Every later step zooms into it.
+
+<img alt="System Context view after ADR-0001" src="https://raw.githubusercontent.com/letscodehu/c4-adr/diagram-previews/pr-21/9c60163/base/SystemContext.png" width="420">
+
+### Step 2: ADR-0002, start with a modular monolith
+
+[PR #21](https://github.com/letscodehu/c4-adr/pull/21): one small team, domain
+boundaries still moving. The decision is **one deployable backend, split into modules**
+(Catalog, Order, Inventory, Customer Accounts) instead of microservices from day one.
+
+**Look at:** the ADR's rejected options (microservices, a layered monolith); the DSL
+diff that adds the Web Application, the Webshop Monolith and its components; the bot
+comment, where the Containers and Components views are marked *new view*; and the tech
+lead's review comment that `Order` already depends on all three other modules. Keep
+that in mind until step 7.
+
+<img alt="Components view after ADR-0002" src="https://raw.githubusercontent.com/letscodehu/c4-adr/diagram-previews/pr-21/9c60163/head/Components.png" width="600">
+
+### Step 3: ADR-0003, use PostgreSQL
+
+[PR #22](https://github.com/letscodehu/c4-adr/pull/22): orders and stock must change
+together, in one transaction. The decision is **managed PostgreSQL**, one schema per
+module.
+
+**Look at:** the DSL diff that adds the `Database` container and the first
+**Deployment** view (a new view in the bot comment); the SRE lead asking about restore
+tests, and the security lead insisting on encryption at rest.
+
+<img alt="Deployment view after ADR-0003" src="https://raw.githubusercontent.com/letscodehu/c4-adr/diagram-previews/pr-22/e6d3f18/head/Deployment.png" width="600">
+
+### Step 4: ADR-0004, payments via an external PSP (Stripe)
+
+[PR #23](https://github.com/letscodehu/c4-adr/pull/23): card payments bring PCI DSS
+compliance. The decision is **Stripe**: card details go from the browser straight to
+Stripe and never touch the Webshop.
+
+**Look at:** the new external system on every view, and the new **Checkout** dynamic
+view, which numbers the steps of a checkout; the ADR openly accepting vendor lock-in;
+and the SRE lead's question: what does checkout do when Stripe is down?
+
+<img alt="Checkout dynamic view after ADR-0004" src="https://raw.githubusercontent.com/letscodehu/c4-adr/diagram-previews/pr-23/e32e4e9/head/Checkout.png" width="600">
+
+### Step 5: ADR-0005, synchronous REST between Order and Inventory
+
+[PR #24](https://github.com/letscodehu/c4-adr/pull/24): two customers must not buy
+the last item in stock. The decision is that **`Order` calls `Inventory`'s REST API and
+waits** for the reservation: simple, with an immediate answer.
+
+**Look at:** the **Consequences** section of the ADR, which already names the price:
+checkout is only as available as `Inventory`. The ADR accepts this "for now". Then
+the `REST/HTTP` label on the `Order` → `Inventory` arrow in the bot comment, and the
+SRE lead's comment on the same risk.
+
+### Step 6: ADR-0006, introduce an event bus (RabbitMQ), superseding ADR-0005
+
+[PR #25](https://github.com/letscodehu/c4-adr/pull/25): during a sales peak, the
+risk from step 5 became real. A slow `Inventory` took checkout down. The decision is
+**RabbitMQ events** instead of the synchronous call.
+
+**Look at:** how decisions change over time. ADR-0006 says *Supersedes ADR-0005*, and
+ADR-0005 is **not deleted**: only its status changes to *Superseded by ADR-0006*
+(*Files changed* shows both ADRs). In the bot comment, the direct `Order` →
+`Inventory` arrow disappears from the Components view and events through the new
+`Message Broker` replace it:
+
+| Before (ADR-0005) | After (ADR-0006) |
+| --- | --- |
+| <img alt="Components view before ADR-0006" src="https://raw.githubusercontent.com/letscodehu/c4-adr/diagram-previews/pr-25/32789a3/base/Components.png" width="400"> | <img alt="Components view after ADR-0006" src="https://raw.githubusercontent.com/letscodehu/c4-adr/diagram-previews/pr-25/32789a3/head/Components.png" width="400"> |
+
+### Step 7: ADR-0007, extract Order into a separate service (proposed, open PR)
+
+[PR #26](https://github.com/letscodehu/c4-adr/pull/26) is **open on purpose and will
+never be merged**: ADR-0007 is *Proposed*, still under discussion. It proposes moving
+`Order` and `Payments` out of the monolith into their own service and database.
+
+**Look at:**
+
+- **The red → green run.** Open the *Commits* tab. The first commit,
+  [`0f341fa`](https://github.com/letscodehu/c4-adr/pull/26/commits/0f341fac639161712933cdee4678011e65bc4a8d),
+  changes only the DSL, and `adr-guard`
+  [**failed**](https://github.com/letscodehu/c4-adr/actions/runs/44751149301): a model
+  change without a decision is not allowed. The second commit,
+  [`b1ebac4`](https://github.com/letscodehu/c4-adr/pull/26/commits/b1ebac4c02bfe8f9febb417e9f01f65e093b9933),
+  adds the ADR, and `adr-guard`
+  [**passes**](https://github.com/letscodehu/c4-adr/actions/runs/44751404735).
+- **The review comments**: the tech lead says *not yet, let's measure first*, the SRE
+  lead asks who pays for a second database, the security lead wants service-to-service
+  authentication settled first. This is what an undecided decision looks like.
+
+<img alt="Containers view proposed by ADR-0007" src="https://raw.githubusercontent.com/letscodehu/c4-adr/diagram-previews/pr-26/b1ebac4/head/Containers.png" width="600">
+
+### Step 8: the published site
+
+Everything merged to `main` is published to GitHub Pages:
+**<https://letscodehu.github.io/c4-adr/>**. This is what you would share with people who
+never open a pull request.
+
+**Look at:**
+
+- The **views**, built from the same DSL:
+  [System Context](https://letscodehu.github.io/c4-adr/main/webshop/context/),
+  [Containers](https://letscodehu.github.io/c4-adr/main/webshop/container/),
+  [Components](https://letscodehu.github.io/c4-adr/main/webshop/component/webshop-monolith/),
+  [Deployment](https://letscodehu.github.io/c4-adr/main/webshop/deployment/) and the
+  [Checkout](https://letscodehu.github.io/c4-adr/main/webshop/dynamic/) dynamic view.
+- The **Decisions** menu ([all ADRs](https://letscodehu.github.io/c4-adr/main/decisions/)):
+  ADR-0001 to ADR-0006 with their status. ADR-0005 shows *superseded by ADR-0006*, and
+  the two pages link to each other. ADR-0007 is not here: it is still in an open pull
+  request, not on `main`.
+
+### For tech leads and architects
+
+The rule "every model change needs a decision" is not a convention here; CI enforces it.
+The [`adr-guard`](#adr-guard) workflow compares the C4 model of the pull request with
+the base branch, and fails if the model changed without an added or modified ADR, or if
+an ADR changed without a model change. Step 7 shows it failing. The [`diagrams`](#diagrams)
+workflow puts Before / After images in every pull request, so reviewers can judge a
+change without reading DSL, and `validate` and `pages` keep the DSL valid and the
+published site current. The details are in [How the CI works](#how-the-ci-works).
+
+The layout (`docs/architecture/workspace.dsl`, `decisions/` imported with `!adrs`, and
+the four workflows) can serve as the starting point of a template repository for your
+own teams. This repository is a demo, not a template: copy what you need.
+
 ## Published site
 
 The model and the decisions are published to GitHub Pages:
@@ -174,11 +345,6 @@ python3 -m unittest discover -s .github/scripts/tests -v
 .github/scripts/render-views --working-tree build/diagrams/head
 .github/scripts/preview-comment build/diagrams/base build/diagrams/head base head
 ```
-
-## Walkthrough
-
-_Coming soon._ This section will guide you through the pull requests in order, one
-architecture decision at a time.
 
 ## Running locally
 
