@@ -38,7 +38,7 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
         webshop.webApp -> webshop.monolith.customerAccounts "Signs customers in and manages profiles using" "JSON/HTTPS"
 
         webshop.monolith.order -> webshop.monolith.catalog "Gets product details and prices from" "In-process call"
-        webshop.monolith.order -> webshop.monolith.inventory "Reserves stock using" "In-process call"
+        webshop.monolith.order -> webshop.monolith.inventory "Reserves stock (synchronous)" "REST/HTTP"
         webshop.monolith.order -> webshop.monolith.customerAccounts "Gets customer and delivery details from" "In-process call"
         webshop.monolith.order -> emailService "Sends order confirmation emails using" "HTTPS"
         emailService -> customer "Delivers emails to"
@@ -88,7 +88,7 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
         component webshop.monolith "Components" {
             include *
             autolayout lr
-            description "The Component view of the Webshop Monolith: its business modules (ADR-0002), including the Payments module that integrates with Stripe (ADR-0004)."
+            description "The Component view of the Webshop Monolith: its business modules (ADR-0002), including the Payments module that integrates with Stripe (ADR-0004) and the synchronous REST call from Order to Inventory (ADR-0005)."
         }
 
         deployment webshop "Production" "Deployment" {
@@ -100,6 +100,7 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
         dynamic webshop.monolith "Checkout" {
             customer -> webshop.webApp "Reviews the cart and clicks Pay"
             webshop.webApp -> webshop.monolith.order "Submits the order"
+            webshop.monolith.order -> webshop.monolith.inventory "Reserves stock for the order lines (synchronous REST call; checkout waits for the answer)"
             webshop.monolith.order -> webshop.monolith.payments "Requests payment for the order total"
             webshop.monolith.payments -> stripe "Creates a payment intent (its client secret goes back to the Web Application)"
             webshop.webApp -> stripe "Confirms the payment with the card details"
@@ -107,7 +108,7 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
             webshop.monolith.payments -> webshop.monolith.order "Marks the order as paid"
             webshop.monolith.order -> emailService "Sends the order confirmation email"
             autolayout tb
-            description "The checkout flow: the customer pays through Stripe, and the order is marked as paid when Stripe's webhook arrives (ADR-0004)."
+            description "The checkout flow: Order reserves stock in Inventory with a synchronous REST call before payment (ADR-0005), the customer pays through Stripe, and the order is marked as paid when Stripe's webhook arrives (ADR-0004)."
         }
 
         styles {
