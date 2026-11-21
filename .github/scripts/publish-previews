@@ -4,7 +4,8 @@
 # Usage: publish-previews <source-dir> <dest-path>
 #
 #   <source-dir>  directory with the rendered images (e.g. base/ and head/ from
-#                 render-views); only *.png and *.svg files are published.
+#                 render-views); only *.png and *.svg files are published,
+#                 both the plain and the highlighted (*.diff.png) images.
 #   <dest-path>   directory on the preview branch, e.g. pr-42/1a2b3c4. Its
 #                 previous content (if any) is replaced.
 #
