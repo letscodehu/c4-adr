@@ -43,7 +43,6 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
         webshop.monolith.order -> webshop.monolith.catalog "Gets product details and prices from" "In-process call"
         webshop.monolith.order -> webshop.monolith.customerAccounts "Gets customer and delivery details from" "In-process call"
         webshop.monolith.order -> emailService "Sends order confirmation emails using" "HTTPS"
-        emailService -> customer "Delivers emails to"
 
         webshop.webApp -> stripe "Sends card details directly to, using Stripe.js" "HTTPS"
         webshop.monolith.order -> webshop.monolith.payments "Requests payment for orders using" "In-process call"
