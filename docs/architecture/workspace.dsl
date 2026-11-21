@@ -86,7 +86,7 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
     views {
         systemContext webshop "SystemContext" {
             include *
-            autolayout lr
+            autolayout tb
             description "The System Context view of the Webshop."
         }
 
