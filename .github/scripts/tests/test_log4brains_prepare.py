@@ -64,12 +64,27 @@ See [ADR-0006: Introduce an event bus (RabbitMQ)](0006-introduce-an-event-bus-ra
         text = "---\nstatus: accepted\n\n# Title\n"
         self.assertEqual(prepare.prepare(text), text)
 
-    def test_keeps_the_status_line_of_a_non_superseded_adr(self):
-        text = "---\nstatus: accepted\n---\n\n# T\n\n* Status: Accepted\n* Supersedes: [ADR-0005: X](0005-x.md)\n"
+    def test_moves_metadata_items_in_front_of_the_other_header_items(self):
+        text = (
+            "---\nstatus: accepted\n---\n\n# T\n\n"
+            "* Status: Accepted\n"
+            "* Supersedes: [ADR-0005: X](0005-x.md)\n"
+            "* Date: 2026-11-20\n"
+            "\n## Context\n\n* Supersedes is not metadata here\n* Date: neither is this\n"
+        )
         self.assertEqual(
             prepare.prepare(text),
-            "# T\n\n* Status: Accepted\n* Supersedes: [ADR-0005: X](0005-x.md)\n",
+            "# T\n\n"
+            "* Status: Accepted\n"
+            "* Date: 2026-11-20\n"
+            "* Supersedes: [ADR-0005: X](0005-x.md)\n"
+            "\n## Context\n\n* Supersedes is not metadata here\n* Date: neither is this\n",
         )
+
+    def test_leaves_a_document_without_a_title_or_header_list_unchanged(self):
+        for text in ("No title\n* Date: x\n* Other\n", "# T\n\nText.\n* Other\n* Date: x\n"):
+            with self.subTest(text=text):
+                self.assertEqual(prepare.prepare(text), text)
 
     def test_handles_dash_bullets_and_a_colon_after_superseded_by(self):
         self.assertEqual(
@@ -101,6 +116,11 @@ class MainTest(unittest.TestCase):
                     self.assertTrue(text.startswith("# "), "title is the first line")
                     self.assertRegex(text, r"\n\* Status: ")
                     self.assertRegex(text, r"\n\* Date: \d{4}-\d{2}-\d{2}\n")
+                    header = text.split("\n## ", 1)[0].strip().split("\n")[2:]
+                    self.assertRegex(header[-1], r"^\* (?!Status|Date)|^\* (Status|Date): ",
+                                     "a header item log4brains keeps, or only metadata")
+                    kinds = ["meta" if prepare.METADATA_ITEM.match(l) else "other" for l in header]
+                    self.assertEqual(kinds, sorted(kinds), "metadata items come first")
             superseded = (target / "0005-synchronous-rest-between-order-and-inventory.md").read_text(encoding="utf-8")
             self.assertIn(
                 "* Status: Superseded by [0006-introduce-an-event-bus-rabbitmq](0006-introduce-an-event-bus-rabbitmq.md)",

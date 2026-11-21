@@ -5,3 +5,6 @@ project:
   name: Webshop architecture decisions
   tz: Europe/Budapest
   adrFolder: ./docs/architecture/decisions
+  repository:
+    url: https://github.com/letscodehu/c4-adr
+    provider: github

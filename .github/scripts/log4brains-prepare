@@ -17,6 +17,12 @@ format, not the content:
   superseding ADR's slug from the text of that line, so a descriptive link
   text ("ADR-0006: ...") would break the build. log4brains then shows the
   superseding ADR's title itself.
+- In the header list, the items log4brains shows in its own page header
+  (Status, Date, Deciders, Tags) are moved in front of the other items (such
+  as `Supersedes: ...`), keeping their order. log4brains removes those items
+  from the body, and when the removed item is the last one of the list, it
+  also removes the blank line after the list, so the next `## ` heading would
+  render as plain text inside the list.
 
 Prints one line per changed file. Exit codes: 0 = ok, 2 = error.
 """
@@ -30,6 +36,9 @@ STATUS_SUPERSEDED = re.compile(
     r"\[[^\]]*\]\((?P<target>[^)\s]+?\.md)\)",
     re.IGNORECASE,
 )
+BULLET = re.compile(r"^\s*[*-]\s+\S")
+# The header items log4brains reads and removes from the body.
+METADATA_ITEM = re.compile(r"^\s*[*-]\s*(status|date|deciders|tags)\s*:", re.IGNORECASE)
 
 
 def strip_front_matter(text):
@@ -56,8 +65,27 @@ def slug_superseded_by_links(text):
     return "\n".join(STATUS_SUPERSEDED.sub(replace, line) for line in text.split("\n"))
 
 
+def metadata_first(text):
+    """Move the log4brains metadata items to the front of the header list."""
+    lines = text.split("\n")
+    # The header list: the first run of bullet lines after the `# ` title.
+    start = next((i for i, line in enumerate(lines) if line.startswith("# ")), None)
+    if start is None:
+        return text
+    first = next((i for i in range(start + 1, len(lines)) if lines[i].strip()), None)
+    if first is None or not BULLET.match(lines[first]):
+        return text
+    last = first
+    while last + 1 < len(lines) and BULLET.match(lines[last + 1]):
+        last += 1
+    items = lines[first:last + 1]
+    metadata = [line for line in items if METADATA_ITEM.match(line)]
+    others = [line for line in items if not METADATA_ITEM.match(line)]
+    return "\n".join(lines[:first] + metadata + others + lines[last + 1:])
+
+
 def prepare(text):
-    return slug_superseded_by_links(strip_front_matter(text))
+    return metadata_first(slug_superseded_by_links(strip_front_matter(text)))
 
 
 def main(argv):
