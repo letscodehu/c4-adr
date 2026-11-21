@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""Highlight the model differences in a Structurizr JSON workspace.
+
+Usage: highlight-diff (--before | --after) WORKSPACE.json DIFF.json OUTPUT.json
+
+DIFF.json is the output of `model-diff --json BASE.json HEAD.json`.
+WORKSPACE.json is the head export (with --after) or the base export (with
+--before) of the same comparison; the ids in DIFF.json refer to it.
+
+Tags the affected elements and relationships, together with their `related`
+ids (implied relationships, deployment instances), and adds a style for each
+tag to `views.configuration.styles`:
+
+    side      DIFF.json   tag            elements                 relationships
+    --after   added       Diff: Added    green thick border       green thick solid line
+    --after   changed     Diff: Changed  orange thick border      orange thick solid line
+    --before  removed     Diff: Removed  red thick dashed border  red thick dashed line
+
+The styles only set the border / line (stroke, strokeWidth, border; color,
+thickness, style), so the fill colour and the shape from the workspace styles
+stay. The tag is appended last, so its style wins over the workspace styles for
+these properties. Relationships are dashed by default in Structurizr, so new
+and changed ones are drawn solid to stand out from both the unchanged and the
+removed (dashed) ones. Existing tags and styles are kept.
+
+Writes the result to OUTPUT.json and prints the number of highlighted ids to
+stderr. Exit codes: 0 = ok, 2 = error.
+"""
+
+import json
+import sys
+
+ADDED = "Diff: Added"
+CHANGED = "Diff: Changed"
+REMOVED = "Diff: Removed"
+
+GREEN = "#2DA44E"
+ORANGE = "#FB8500"
+RED = "#CF222E"
+
+# DIFF.json section -> tag, per side. Earlier entries win if an id is in more
+# than one section (e.g. an implied relationship of an added and a changed one).
+SECTIONS = {
+    "--after": [("added", ADDED), ("changed", CHANGED)],
+    "--before": [("removed", REMOVED)],
+}
+
+ELEMENT_STYLES = {
+    ADDED: {"stroke": GREEN, "strokeWidth": 6},
+    CHANGED: {"stroke": ORANGE, "strokeWidth": 6},
+    REMOVED: {"stroke": RED, "strokeWidth": 6, "border": "Dashed"},
+}
+RELATIONSHIP_STYLES = {
+    ADDED: {"color": GREEN, "thickness": 4, "style": "Solid"},
+    CHANGED: {"color": ORANGE, "thickness": 4, "style": "Solid"},
+    REMOVED: {"color": RED, "thickness": 4, "style": "Dashed"},
+}
+
+CHILD_COLLECTIONS = (
+    "people",
+    "softwareSystems",
+    "customElements",
+    "containers",
+    "components",
+    "deploymentNodes",
+    "children",
+    "infrastructureNodes",
+    "softwareSystemInstances",
+    "containerInstances",
+)
+
+
+def tags_by_id(diff, side):
+    """Return {id: tag} of everything to highlight on this side."""
+    result = {}
+    for section, tag in SECTIONS[side]:
+        for item in diff.get(section, []):
+            for item_id in [item["id"], *item.get("related", [])]:
+                result.setdefault(str(item_id), tag)
+    return result
+
+
+def walk(raw):
+    """Yield (element, its relationships) for the element and its descendants."""
+    yield raw, raw.get("relationships", [])
+    for collection in CHILD_COLLECTIONS:
+        for child in raw.get(collection, []):
+            yield from walk(child)
+
+
+def add_tag(raw, tag):
+    tags = [t.strip() for t in raw.get("tags", "").split(",") if t.strip()]
+    if tag not in tags:
+        tags.append(tag)
+    raw["tags"] = ",".join(tags)
+
+
+def highlight(workspace, diff, side):
+    """Tag and style `workspace` in place. Return {tag: number of ids tagged}."""
+    wanted = tags_by_id(diff, side)
+    used = {"elements": set(), "relationships": set()}
+    counts = {}
+    model = workspace.setdefault("model", {})
+    for collection in ("people", "softwareSystems", "customElements", "deploymentNodes"):
+        for top in model.get(collection, []):
+            for element, relationships in walk(top):
+                for raw, kind in [(element, "elements")] + [(r, "relationships") for r in relationships]:
+                    tag = wanted.get(str(raw.get("id")))
+                    if tag:
+                        add_tag(raw, tag)
+                        used[kind].add(tag)
+                        counts[tag] = counts.get(tag, 0) + 1
+
+    styles = workspace.setdefault("views", {}).setdefault("configuration", {}).setdefault("styles", {})
+    for kind, definitions in (("elements", ELEMENT_STYLES), ("relationships", RELATIONSHIP_STYLES)):
+        for tag in sorted(used[kind]):
+            styles.setdefault(kind, []).append({"tag": tag, **definitions[tag]})
+    return counts
+
+
+def main(argv):
+    if len(argv) != 5 or argv[1] not in SECTIONS:
+        print("usage: highlight-diff (--before | --after) WORKSPACE.json DIFF.json OUTPUT.json", file=sys.stderr)
+        return 2
+    side, workspace_path, diff_path, output_path = argv[1:]
+    try:
+        with open(workspace_path, encoding="utf-8") as f:
+            workspace = json.load(f)
+        with open(diff_path, encoding="utf-8") as f:
+            diff = json.load(f)
+        counts = highlight(workspace, diff, side)
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(workspace, f, ensure_ascii=False, indent=2)
+    except (OSError, ValueError, KeyError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    summary = ", ".join(f"{n} {tag}" for tag, n in sorted(counts.items())) or "nothing"
+    print(f"Highlighted {summary} ({side[2:]})", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

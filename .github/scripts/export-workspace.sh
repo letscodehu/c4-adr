@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Export the Structurizr workspace of a git revision with the Structurizr CLI.
 #
-# Usage: export-workspace.sh <git-rev | --working-tree> <format> <output-dir>
+# Usage: export-workspace.sh <git-rev | --working-tree | --file=PATH> <format> <output-dir>
 #
 #   <git-rev>       any revision git understands (a SHA, origin/main, ...). The
 #                   revision is checked out into a temporary `git worktree`, so
 #                   relative paths used by `!adrs`, `!docs` and `!include` resolve
 #                   exactly as they did in that revision.
 #   --working-tree  export the current checkout as it is on disk.
+#   --file=PATH     export the workspace file PATH (DSL or JSON) instead of
+#                   WORKSPACE, e.g. a JSON export changed by highlight-diff.
 #   <format>        any Structurizr CLI export format: json, plantuml/c4plantuml, ...
 #   <output-dir>    created if missing; the CLI writes its files here.
 #
@@ -15,11 +17,12 @@
 #   WORKSPACE              path of the DSL file, relative to the repository root
 #   STRUCTURIZR_CLI_IMAGE  Docker image of the Structurizr CLI
 #
-# Shared by the CI workflows (adr-guard.yml, and the diagram preview workflow).
+# Shared by the CI workflows (adr-guard.yml, and the diagram preview workflow
+# through render-views).
 set -euo pipefail
 
 if [ "$#" -ne 3 ]; then
-  echo "usage: $0 <git-rev | --working-tree> <format> <output-dir>" >&2
+  echo "usage: $0 <git-rev | --working-tree | --file=PATH> <format> <output-dir>" >&2
   exit 2
 fi
 
@@ -37,6 +40,11 @@ output_dir="$(cd "$output_dir" && pwd)"
 if [ "$rev" = "--working-tree" ]; then
   rev="the working tree"
   source_root="$repo_root"
+elif [ "${rev#--file=}" != "$rev" ]; then
+  file="${rev#--file=}"
+  source_root="$(cd "$(dirname "$file")" && pwd)"
+  WORKSPACE="$(basename "$file")"
+  rev="$file"
 else
   tmp="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/export-workspace.XXXXXX")"
   source_root="$tmp/src"

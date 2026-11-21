@@ -5,8 +5,10 @@ Usage: preview-comment BASE_DIR HEAD_DIR BASE_URL HEAD_URL
                        [--base-rev REV] [--head-rev REV] [--run-url URL]
 
 BASE_DIR and HEAD_DIR are output directories of `render-views`: one
-`<view-key>.puml` (plus `.png` and `.svg`) per view. BASE_URL and HEAD_URL are
-where the PNGs of those directories are published (`<URL>/<view-key>.png`).
+`<view-key>.puml` (plus `.png` and `.svg`) per view, and a highlighted
+`<view-key>.diff.puml` (plus `.diff.png` and `.diff.svg`) for the views that show
+a model difference. BASE_URL and HEAD_URL are where the PNGs of those
+directories are published (`<URL>/<view-key>.png`, `<URL>/<view-key>.diff.png`).
 
 Prints the comment in GitHub Markdown. The first line is the hidden marker
 (MARKER) the workflow uses to find and update the comment on later pushes.
@@ -19,6 +21,13 @@ layout direction, title). Statuses:
 - removed:   only in base                      -> After says "removed"
 - unchanged: in base and head, same source     -> collapsed in <details>
 If no view is changed, new or removed, the comment says "No diagram changes".
+
+The classification only uses the NOT highlighted `<view-key>.puml` sources, so
+highlighting never makes a view "changed". The Before / After images of a
+changed, new or removed view are the highlighted ones where they exist (new
+and changed elements and relationships on the After image, removed ones on the
+Before image); a legend (LEGEND) is then shown above the tables. Unchanged
+views always show the plain image.
 """
 
 import argparse
@@ -34,12 +43,31 @@ UNCHANGED = "unchanged"
 
 LABELS = {CHANGED: "changed", NEW: "new view", REMOVED: "removed"}
 
+HIGHLIGHTED_SUFFIX = ".diff"
+LEGEND = (
+    "**Highlighted model changes:** 🟩 new · 🟧 changed (on the After image) · "
+    "🟥 removed (dashed, on the Before image)"
+)
+
 
 def read_views(directory):
-    """Return {view key: PlantUML source} of a render-views output directory."""
+    """Return {view key: PlantUML source} of a render-views output directory.
+
+    Only the plain sources; the highlighted `<view-key>.diff.puml` files are
+    left out (see read_highlighted).
+    """
     return {
         path.stem: path.read_text(encoding="utf-8")
         for path in sorted(pathlib.Path(directory).glob("*.puml"))
+        if not path.stem.endswith(HIGHLIGHTED_SUFFIX)
+    }
+
+
+def read_highlighted(directory):
+    """Return the keys of the views that have a highlighted image in the directory."""
+    return {
+        path.stem[: -len(HIGHLIGHTED_SUFFIX)]
+        for path in pathlib.Path(directory).glob(f"*{HIGHLIGHTED_SUFFIX}.puml")
     }
 
 
@@ -59,11 +87,22 @@ def compare(base, head):
     return result
 
 
-def image(key, side, url):
-    return f"![{key} ({side})]({url.rstrip('/')}/{key}.png)"
+def image(key, side, url, highlighted=False):
+    name = key + (HIGHLIGHTED_SUFFIX if highlighted else "")
+    return f"![{key} ({side})]({url.rstrip('/')}/{name}.png)"
 
 
-def build_comment(base, head, base_url, head_url, base_rev=None, head_rev=None, run_url=None):
+def build_comment(
+    base,
+    head,
+    base_url,
+    head_url,
+    base_rev=None,
+    head_rev=None,
+    run_url=None,
+    base_highlighted=frozenset(),
+    head_highlighted=frozenset(),
+):
     views = compare(base, head)
     visible = [(key, status) for key, status in views if status != UNCHANGED]
     unchanged = [key for key, status in views if status == UNCHANGED]
@@ -79,10 +118,15 @@ def build_comment(base, head, base_url, head_url, base_rev=None, head_rev=None, 
             if any(s == status for _, s in visible)
         )
         lines.append(f"**{len(visible)} of {len(views)} view(s) differ:** {counts}.")
+        if any(
+            (status != NEW and key in base_highlighted) or (status != REMOVED and key in head_highlighted)
+            for key, status in visible
+        ):
+            lines += ["", LEGEND]
 
     for key, status in visible:
-        before = "_new view_" if status == NEW else image(key, "before", base_url)
-        after = "_removed_" if status == REMOVED else image(key, "after", head_url)
+        before = "_new view_" if status == NEW else image(key, "before", base_url, key in base_highlighted)
+        after = "_removed_" if status == REMOVED else image(key, "after", head_url, key in head_highlighted)
         lines += [
             "",
             f"### {key} ({LABELS[status]})",
@@ -132,6 +176,8 @@ def main(argv):
             args.base_rev,
             args.head_rev,
             args.run_url,
+            read_highlighted(args.base_dir),
+            read_highlighted(args.head_dir),
         )
     )
     return 0

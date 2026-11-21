@@ -220,8 +220,9 @@ docs/
     diagrams.yml             # renders the views and comments Before / After images on every pull request
   scripts/
     export-workspace.sh      # exports the workspace of any git revision with the Structurizr CLI
-    model-diff               # compares the C4 model of two JSON exports
-    render-views             # renders every view of a git revision to PNG and SVG
+    model-diff               # compares the C4 model of two JSON exports (text, or --json)
+    highlight-diff           # tags and styles the model differences in a JSON export
+    render-views             # renders every view of a git revision to PNG and SVG, optionally highlighted
     publish-previews         # pushes rendered images to the orphan diagram-previews branch
     preview-comment          # builds the Before / After diagram preview comment
     log4brains-prepare       # adapts the ADR format for log4brains in the CI checkout
@@ -314,6 +315,31 @@ comment with the new images instead of adding another one.
 - Unchanged views are collapsed in a `<details>` block at the end.
 - If nothing changed, the comment says **No diagram changes**.
 
+The Before / After images **highlight the model changes** of the pull request. Only the
+border of an element and the line of a relationship change; the fill colour and the shape
+(database cylinder, queue, person, ...) stay as the workspace `styles` define them:
+
+| Mark | Image | Meaning |
+| --- | --- | --- |
+| 🟩 green, thick border / solid line | After | new element or relationship |
+| 🟧 orange, thick border / solid line | After | changed element or relationship (description, technology, tag, ...) |
+| 🟥 red, thick dashed border / line | Before | removed element or relationship |
+
+When at least one image is highlighted, the comment has a one-line legend above the
+tables. A pull request that changes only `views` or `styles` (no model change) has no
+highlighting and no legend. This works on every view type (System Context, Container,
+Component, Deployment, Dynamic), wherever the element or relationship is drawn:
+
+- an implied relationship on a higher-level view (e.g. a new component relationship
+  shown between two containers or systems) is marked like the explicit one it comes from;
+- the deployment instances of a changed container or software system are marked too,
+  as they show its name and description;
+- a relationship whose description changed counts as *changed* (orange), even though
+  adr-guard lists it as one removed and one added relationship.
+
+The highlighting is for review only: the GitHub Pages site and the plain images in the
+workflow artifact are not highlighted.
+
 How it works:
 
 1. `.github/scripts/render-views` renders every view of the base revision (the merge
@@ -321,14 +347,24 @@ How it works:
    It exports the workspace with `export-workspace.sh` as `plantuml/structurizr`
    (this flavour keeps the colours and shapes of the workspace `styles`) and renders
    each view to PNG and SVG with the `plantuml/plantuml` Docker image.
-2. A view counts as changed when its PlantUML source differs, so anything drawn on it
-   counts: elements, relationships, descriptions, styles, layout, title.
-3. All PNG, SVG and PlantUML files are uploaded as the
+   With `--compare-to <base-rev>` (After side) or `--removed-in <head-rev>` (Before
+   side), it also writes a highlighted `<view-key>.diff.png` (and `.svg`, `.puml`) for
+   every view that shows a model difference: it exports both revisions as JSON,
+   `model-diff --json` lists the added, changed and removed elements and relationships
+   with their ids (and the implied relationships and deployment instances that belong to
+   them), `highlight-diff` adds a `Diff: Added` / `Diff: Changed` / `Diff: Removed` tag
+   and a matching style to them in the JSON, and that JSON is exported as
+   `plantuml/structurizr` and rendered again. The workspace DSL is never modified.
+2. A view counts as changed when its **plain** (not highlighted) PlantUML source
+   differs, so anything drawn on it counts: elements, relationships, descriptions,
+   styles, layout, title. The highlighting never makes a view count as changed, and
+   unchanged views always show the plain image.
+3. All PNG, SVG and PlantUML files, plain and highlighted, are uploaded as the
    `diagrams-pr-<number>-<short-sha>` **workflow artifact**: open the run from the
    comment's footer link (or the PR's Checks tab) to download them.
 4. `.github/scripts/publish-previews` pushes the images to the **orphan
    `diagram-previews` branch**, to `pr-<number>/<short-sha>/base/<view-key>.png` and
-   `pr-<number>/<short-sha>/head/<view-key>.png` (and `.svg`). If several pull requests
+   `pr-<number>/<short-sha>/head/<view-key>.png` (and `.diff.png`, `.svg`, `.diff.svg`). If several pull requests
    push at the same time, a rejected push is rebuilt on the new tip of the branch and
    retried. The workflow creates the branch on its first run.
 5. `.github/scripts/preview-comment` builds the comment, with images linked from
@@ -352,8 +388,8 @@ Render the views and build the comment locally (Docker and Python 3 needed):
 ```sh
 python3 -m unittest discover -s .github/scripts/tests -v
 
-.github/scripts/render-views origin/main build/diagrams/base
-.github/scripts/render-views --working-tree build/diagrams/head
+.github/scripts/render-views --removed-in --working-tree origin/main build/diagrams/base
+.github/scripts/render-views --compare-to origin/main --working-tree build/diagrams/head
 .github/scripts/preview-comment build/diagrams/base build/diagrams/head base head
 ```
 

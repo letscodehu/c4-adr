@@ -1,11 +1,31 @@
 #!/usr/bin/env python3
 """Compare the C4 model of two Structurizr JSON exports.
 
-Usage: model-diff BASE.json HEAD.json
+Usage: model-diff [--json] BASE.json HEAD.json
 
 Prints a human-readable report. The first line is the verdict
 ("Model changed: ..." or "Model unchanged."). Exit codes, like diff(1):
 0 = model unchanged, 1 = model changed, 2 = error.
+
+With --json, prints a machine-readable report instead (same exit codes),
+used to highlight the differences on the diagram previews:
+
+    {"added":   [ITEM, ...],   # only in HEAD, `id` is the HEAD id
+     "changed": [ITEM, ...],   # in both, `id` is the HEAD id, `baseId` the BASE id
+     "removed": [ITEM, ...]}   # only in BASE, `id` is the BASE id
+
+    ITEM = {"kind": "element" | "relationship",
+            "key": the key of the text report,
+            "id": the generated id in the workspace JSON,
+            "related": [ids drawn on behalf of this item, same side as `id`]}
+
+`related` lists, for a relationship, the implied (and replicated) relationships
+that link to it through `linkedRelationshipId`, transitively; for an element,
+the software system / container instances of it in deployment environments.
+A relationship whose description changed has a new key, so the text report
+shows it as removed + added. The JSON report pairs such a removed and added
+relationship into one "changed" item when they are the only ones between the
+same source and destination.
 
 Only the `model` part of the workspace is compared. Views, styles,
 documentation, decisions (ADRs), configuration and layout are ignored.
@@ -95,8 +115,16 @@ def unique_key(key, taken, suffix):
     return candidate
 
 
-def normalise(workspace):
-    """Return ({element key: attributes}, {relationship key: attributes})."""
+def normalise(workspace, info=None):
+    """Return ({element key: attributes}, {relationship key: attributes}).
+
+    If `info` is a dict, it is filled with what the JSON report needs:
+    "ids" {key: generated id}, "ends" {relationship key: (source key,
+    destination key)}, "links" {relationship id: linkedRelationshipId} of every
+    relationship (implied ones too), "instances" {element id: [instance ids]}.
+    """
+    if info is not None:
+        info.update(ids={}, ends={}, links={}, instances={})
     model = workspace.get("model", {})
     elements = {}
     paths_by_id = {}  # generated id -> name path (e.g. "Webshop/API")
@@ -114,6 +142,11 @@ def normalise(workspace):
         elements[key] = normalise_attributes(raw, IGNORED_ELEMENT_KEYS)
         paths_by_id[raw.get("id")] = path
         keys_by_id[raw.get("id")] = key
+        if info is not None:
+            info["ids"][key] = raw.get("id")
+            if element_type.endswith("Instance"):
+                ref = raw.get("softwareSystemId") or raw.get("containerId")
+                info["instances"].setdefault(ref, []).append(raw.get("id"))
         raw_relationships.extend(raw.get("relationships", []))
         for collection, child_type in COLLECTIONS.items():
             for child in raw.get(collection, []):
@@ -132,6 +165,8 @@ def normalise(workspace):
 
     relationships = {}
     for raw in raw_relationships:
+        if info is not None:
+            info["links"][raw.get("id")] = raw.get("linkedRelationshipId")
         if raw.get("linkedRelationshipId"):
             continue  # implied relationship
         source = keys_by_id.get(raw.get("sourceId"), f"unknown element {raw.get('sourceId')}")
@@ -139,6 +174,9 @@ def normalise(workspace):
         key = f'{source} -> {destination} "{raw.get("description", "")}"'
         key = unique_key(key, relationships, raw.get("technology"))
         relationships[key] = normalise_attributes(raw, IGNORED_RELATIONSHIP_KEYS)
+        if info is not None:
+            info["ids"][key] = raw.get("id")
+            info["ends"][key] = (source, destination)
     return elements, relationships
 
 
@@ -170,19 +208,71 @@ def diff(base_workspace, head_workspace):
     )
 
 
+def related_ids(kind, item_id, info):
+    """Ids drawn on behalf of an element or an explicit relationship."""
+    if kind == "element":
+        return sorted(info["instances"].get(item_id, []), key=str)
+    found, frontier = [], {item_id}
+    while frontier:
+        frontier = {rid for rid, linked in info["links"].items() if linked in frontier and rid not in found}
+        found.extend(sorted(frontier, key=str))
+    return found
+
+
+def diff_ids(base_workspace, head_workspace):
+    """Return the JSON report: {"added": [...], "changed": [...], "removed": [...]}."""
+    base_info, head_info = {}, {}
+    base_sections = normalise(base_workspace, base_info)
+    head_sections = normalise(head_workspace, head_info)
+    report = {"added": [], "changed": [], "removed": []}
+
+    def item(kind, key, info, **extra):
+        return {"kind": kind, "key": key, "id": info["ids"][key],
+                "related": related_ids(kind, info["ids"][key], info), **extra}
+
+    for kind, base, head in zip(("element", "relationship"), base_sections, head_sections):
+        added = [k for k in sorted(head) if k not in base and k in head_info["ids"]]
+        removed = [k for k in sorted(base) if k not in head and k in base_info["ids"]]
+        changed = [k for k in sorted(base) if k in head and base[k] != head[k] and k in head_info["ids"]]
+        for key in changed:
+            report["changed"].append(item(kind, key, head_info, baseId=base_info["ids"][key]))
+        if kind == "relationship":
+            # Pair a removed and an added relationship between the same two
+            # elements (typically a new description) into one change.
+            for ends in {base_info["ends"][k] for k in removed}:
+                old = [k for k in removed if base_info["ends"][k] == ends]
+                new = [k for k in added if head_info["ends"][k] == ends]
+                if len(old) == 1 and len(new) == 1:
+                    removed.remove(old[0])
+                    added.remove(new[0])
+                    report["changed"].append(item(kind, new[0], head_info, baseId=base_info["ids"][old[0]]))
+        report["added"] += [item(kind, key, head_info) for key in added]
+        report["removed"] += [item(kind, key, base_info) for key in removed]
+    for items in report.values():
+        items.sort(key=lambda i: (i["kind"], i["key"]))
+    return report
+
+
 def main(argv):
-    if len(argv) != 3:
-        print("usage: model-diff BASE.json HEAD.json", file=sys.stderr)
+    args = argv[1:]
+    as_json = "--json" in args
+    if as_json:
+        args.remove("--json")
+    if len(args) != 2:
+        print("usage: model-diff [--json] BASE.json HEAD.json", file=sys.stderr)
         return 2
     try:
         workspaces = []
-        for path in argv[1:]:
+        for path in args:
             with open(path, encoding="utf-8") as f:
                 workspaces.append(json.load(f))
     except (OSError, ValueError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     changes = diff(*workspaces)
+    if as_json:
+        print(json.dumps(diff_ids(*workspaces), ensure_ascii=False, indent=2))
+        return 1 if changes else 0
     if not changes:
         print("Model unchanged.")
         return 0

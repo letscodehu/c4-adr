@@ -1,27 +1,53 @@
 #!/usr/bin/env bash
-# Render every view of the Structurizr workspace of a git revision to PNG and SVG.
+# Render every view of the Structurizr workspace of a git revision to PNG and SVG,
+# optionally with the model differences to another revision highlighted.
 #
-# Usage: render-views <git-rev | --working-tree> <output-dir>
+# Usage: render-views [--compare-to <base-rev> | --removed-in <head-rev>]
+#                     <git-rev | --working-tree> <output-dir>
+#
+#   --compare-to <base-rev>   this revision is the After side: highlight what is
+#                             new (green) or changed (orange) since <base-rev>.
+#   --removed-in <head-rev>   this revision is the Before side: highlight what
+#                             <head-rev> removes (red, dashed).
+#   Both accept --working-tree as the other revision.
 #
 # Writes, for every view in the workspace (the view key is the file name):
-#   <output-dir>/<view-key>.puml   PlantUML source, used to detect changes
-#   <output-dir>/<view-key>.png
-#   <output-dir>/<view-key>.svg
+#   <output-dir>/<view-key>.puml       PlantUML source, NOT highlighted; used to
+#                                      classify the views (changed / new / ...)
+#   <output-dir>/<view-key>.png, .svg  the view, NOT highlighted
+# and, with --compare-to / --removed-in, for every view that shows at least one
+# highlighted element or relationship:
+#   <output-dir>/<view-key>.diff.puml, .diff.png, .diff.svg   highlighted
 #
 # How: export-workspace.sh exports the workspace with the Structurizr CLI as
 # `plantuml/structurizr` (this flavour keeps the colours and shapes of the
 # workspace `styles`), then the PlantUML Docker image renders each view. The
 # separate legend diagrams the exporter writes (`*-key.puml`) are skipped.
+# To highlight, both revisions are exported as JSON, compared with
+# `model-diff --json`, the affected elements and relationships are tagged and
+# styled with `highlight-diff`, and that JSON is exported as PlantUML again.
 #
 # Environment (all have defaults, override them from the workflow `env`):
 #   WORKSPACE, STRUCTURIZR_CLI_IMAGE   see export-workspace.sh
 #   PLANTUML_IMAGE                     Docker image of PlantUML
 set -euo pipefail
 
-if [ "$#" -ne 2 ]; then
-  echo "usage: $0 <git-rev | --working-tree> <output-dir>" >&2
+usage() {
+  echo "usage: $0 [--compare-to <base-rev> | --removed-in <head-rev>] <git-rev | --working-tree> <output-dir>" >&2
   exit 2
-fi
+}
+
+mode=""
+other_rev=""
+case "${1:-}" in
+  --compare-to | --removed-in)
+    [ "$#" -eq 4 ] || usage
+    mode="$1"
+    other_rev="$2"
+    shift 2
+    ;;
+esac
+[ "$#" -eq 2 ] || usage
 
 rev="$1"
 output_dir="$2"
@@ -32,27 +58,63 @@ scripts_dir="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$output_dir"
 output_dir="$(cd "$output_dir" && pwd)"
 
-export_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/render-views.XXXXXX")"
-trap 'rm -rf "$export_dir"' EXIT
+work_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/render-views.XXXXXX")"
+trap 'rm -rf "$work_dir"' EXIT
 
-"$scripts_dir/export-workspace.sh" "$rev" plantuml/structurizr "$export_dir"
+# Copy the views of an export directory as <key><suffix>.puml into the output.
+copy_views() {
+  local from="$1" suffix="$2" file key count=0
+  for file in "$from"/structurizr-*.puml; do
+    [ -e "$file" ] || continue
+    case "$file" in *-key.puml) continue ;; esac
+    key="$(basename "$file" .puml)"
+    key="${key#structurizr-}"
+    if [ -n "$suffix" ] && ! grep -qE 'Diff: (Added|Changed|Removed)' "$file"; then
+      continue # nothing highlighted on this view
+    fi
+    cp "$file" "$output_dir/$key$suffix.puml"
+    count=$((count + 1))
+  done
+  echo "$count"
+}
 
-count=0
-for file in "$export_dir"/structurizr-*.puml; do
-  [ -e "$file" ] || continue
-  case "$file" in *-key.puml) continue ;; esac
-  key="$(basename "$file" .puml)"
-  key="${key#structurizr-}"
-  cp "$file" "$output_dir/$key.puml"
-  count=$((count + 1))
-done
+"$scripts_dir/export-workspace.sh" "$rev" plantuml/structurizr "$work_dir/plain"
+count="$(copy_views "$work_dir/plain" "")"
 
 if [ "$count" -eq 0 ]; then
   echo "No views to render." >&2
   exit 0
 fi
 
-echo "Rendering $count view(s) into $output_dir" >&2
+if [ -n "$mode" ]; then
+  "$scripts_dir/export-workspace.sh" "$rev" json "$work_dir/this"
+  "$scripts_dir/export-workspace.sh" "$other_rev" json "$work_dir/other"
+  this_json="$(ls "$work_dir"/this/*.json)"
+  other_json="$(ls "$work_dir"/other/*.json)"
+  if [ "$mode" = "--compare-to" ]; then
+    side=--after
+    set -- "$other_json" "$this_json"
+  else
+    side=--before
+    set -- "$this_json" "$other_json"
+  fi
+  status=0
+  "$scripts_dir/model-diff" --json "$@" > "$work_dir/diff.json" || status=$?
+  if [ "$status" -gt 1 ]; then
+    echo "error: model-diff failed" >&2
+    exit "$status"
+  fi
+  if [ "$status" -eq 1 ]; then
+    "$scripts_dir/highlight-diff" "$side" "$this_json" "$work_dir/diff.json" "$work_dir/highlighted.json"
+    "$scripts_dir/export-workspace.sh" --file="$work_dir/highlighted.json" plantuml/structurizr "$work_dir/highlighted"
+    highlighted="$(copy_views "$work_dir/highlighted" ".diff")"
+    echo "$highlighted view(s) with highlighted model differences" >&2
+  else
+    echo "Model unchanged, nothing to highlight." >&2
+  fi
+fi
+
+echo "Rendering $(ls "$output_dir"/*.puml | wc -l | tr -d ' ') PlantUML file(s) into $output_dir" >&2
 for format in png svg; do
   docker run --rm \
     --user "$(id -u):$(id -g)" \
