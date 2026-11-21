@@ -22,6 +22,10 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
                 tags "Queue"
             }
 
+            notificationService = container "Notification Service" "Sends order status updates to customers by SMS." "Go" {
+                tags "Demo"
+            }
+
             database = container "Database" "Stores products, orders, payment records, stock levels and customer accounts, one schema per module." "PostgreSQL" {
                 tags "Database"
             }
@@ -43,7 +47,9 @@ workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architect
         webshop.monolith.order -> webshop.monolith.catalog "Gets product details and prices from" "In-process call"
         webshop.monolith.order -> webshop.monolith.customerAccounts "Gets customer and delivery details from" "In-process call"
         webshop.monolith.order -> emailService "Sends order confirmation emails using" "HTTPS"
-        emailService -> customer "Delivers emails to"
+        emailService -> customer "Delivers order confirmation emails to"
+        webshop.messageBroker -> webshop.notificationService "Delivers OrderPlaced to" "AMQP"
+        webshop.notificationService -> customer "Sends order status SMS to" "SMS"
 
         webshop.webApp -> stripe "Sends card details directly to, using Stripe.js" "HTTPS"
         webshop.monolith.order -> webshop.monolith.payments "Requests payment for orders using" "In-process call"
