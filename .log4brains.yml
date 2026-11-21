@@ -8,3 +8,4 @@ project:
   repository:
     url: https://github.com/letscodehu/c4-adr
     provider: github
+    viewFileUriPattern: /blob/main/%path

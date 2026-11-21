@@ -156,9 +156,10 @@ never be merged**: ADR-0007 is *Proposed*, still under discussion. It proposes m
 
 ### Step 8: the published site
 
-Everything merged to `main` is published to GitHub Pages:
-**<https://letscodehu.github.io/c4-adr/>**. This is what you would share with people who
-never open a pull request.
+Everything merged to `main` is published to GitHub Pages as two sites: the diagrams at
+**<https://letscodehu.github.io/c4-adr/>** and the decisions at
+**<https://letscodehu.github.io/c4-adr/adr/>**. This is what you would share with people
+who never open a pull request.
 
 **Look at:**
 
@@ -168,10 +169,11 @@ never open a pull request.
   [Components](https://letscodehu.github.io/c4-adr/main/webshop/component/webshop-monolith/),
   [Deployment](https://letscodehu.github.io/c4-adr/main/webshop/deployment/) and the
   [Checkout](https://letscodehu.github.io/c4-adr/main/webshop/dynamic/) dynamic view.
-- The **Decisions** menu ([all ADRs](https://letscodehu.github.io/c4-adr/main/decisions/)):
-  ADR-0001 to ADR-0006 with their status. ADR-0005 shows *superseded by ADR-0006*, and
-  the two pages link to each other. ADR-0007 is not here: it is still in an open pull
-  request, not on `main`.
+- The **decisions** ([ADR site](https://letscodehu.github.io/c4-adr/adr/), built with
+  [log4brains](https://github.com/thomvaill/log4brains)): ADR-0001 to ADR-0006 on a
+  timeline, with their status and full-text search (try "RabbitMQ"). ADR-0005 is marked
+  *superseded* with a link to ADR-0006, and ADR-0006 links back with *Supersedes
+  ADR-0005*. ADR-0007 is not here: it is still in an open pull request, not on `main`.
 
 ### For tech leads and architects
 
@@ -183,16 +185,22 @@ workflow puts Before / After images in every pull request, so reviewers can judg
 change without reading DSL, and `validate` and `pages` keep the DSL valid and the
 published site current. The details are in [How the CI works](#how-the-ci-works).
 
-The layout (`docs/architecture/workspace.dsl`, `decisions/` imported with `!adrs`, and
-the four workflows) can serve as the starting point of a template repository for your
+The layout (`docs/architecture/workspace.dsl`, `decisions/` published with log4brains,
+and the four workflows) can serve as the starting point of a template repository for your
 own teams. This repository is a demo, not a template: copy what you need.
 
 ## Published site
 
-The model and the decisions are published to GitHub Pages:
-**<https://letscodehu.github.io/c4-adr/>**
+One `pages` workflow run publishes two static sites to GitHub Pages:
 
-Browse the diagrams there, and open the **Decisions** menu to read the ADRs.
+| Site | URL | Built with |
+| --- | --- | --- |
+| The C4 views (diagrams) | **<https://letscodehu.github.io/c4-adr/>** | [Structurizr site generatr](https://github.com/avisi-cloud/structurizr-site-generatr) from `workspace.dsl` |
+| The ADRs (decisions) | **<https://letscodehu.github.io/c4-adr/adr/>** | [log4brains](https://github.com/thomvaill/log4brains) from `docs/architecture/decisions/` |
+
+The ADR site has a decision timeline, full-text search and the *superseded* links; its
+home page links back to the diagrams. The old `main/decisions/` page of the Structurizr
+site redirects to the ADR site.
 
 ## Repository structure
 
@@ -200,12 +208,14 @@ Browse the diagrams there, and open the **Decisions** menu to read the ADRs.
 docs/
   architecture/
     workspace.dsl            # Structurizr DSL workspace (C4 model + views)
-    decisions/               # ADRs in MADR format, imported via !adrs
+    decisions/               # ADRs in MADR format, published with log4brains
       0001-record-architecture-decisions.md
+    adr-index.md             # home page of the log4brains ADR site
+.log4brains.yml              # log4brains configuration (project name, ADR folder)
 .github/
   workflows/
     validate.yml             # validates the DSL on every pull request and push to main
-    pages.yml                # builds the Structurizr site and deploys it to GitHub Pages
+    pages.yml                # builds the Structurizr and log4brains sites and deploys them to GitHub Pages
     adr-guard.yml            # fails a pull request that changes the model without an ADR, or vice versa
     diagrams.yml             # renders the views and comments Before / After images on every pull request
   scripts/
@@ -214,7 +224,8 @@ docs/
     render-views             # renders every view of a git revision to PNG and SVG
     publish-previews         # pushes rendered images to the orphan diagram-previews branch
     preview-comment          # builds the Before / After diagram preview comment
-    tests/                   # unit tests and fixtures for model-diff and preview-comment
+    log4brains-prepare       # adapts the ADR format for log4brains in the CI checkout
+    tests/                   # unit tests and fixtures for the scripts above
 ```
 
 Rendered images are never committed to `main`. They are produced by CI and published to
@@ -226,7 +237,7 @@ GitHub Pages, to workflow artifacts and to the orphan `diagram-previews` branch 
 | Workflow | Runs on | What it does |
 | --- | --- | --- |
 | `validate` | every pull request, push to `main` | Validates `workspace.dsl` with the Structurizr CLI. |
-| `pages` | push to `main` | Builds the Structurizr site and deploys it to GitHub Pages. |
+| `pages` | push to `main`, manual (`workflow_dispatch`) | Builds the Structurizr site (C4 views) and the log4brains site (ADRs, under `/adr/`) and deploys both to GitHub Pages in one artifact (see below). |
 | `adr-guard` | every pull request | Checks that model changes and ADR changes go together (see below), and runs the unit tests of the CI scripts. |
 | `diagrams` | every pull request | Renders every view before and after the pull request, and keeps one bot comment with Before / After images up to date (see below). |
 
@@ -346,9 +357,41 @@ python3 -m unittest discover -s .github/scripts/tests -v
 .github/scripts/preview-comment build/diagrams/base build/diagrams/head base head
 ```
 
+### pages
+
+`.github/workflows/pages.yml` runs on every push to `main` and on demand (*Actions* →
+`pages` → *Run workflow*). One job builds both sites into `build/site`, and one Pages
+deployment publishes them together:
+
+1. The Structurizr site generatr builds the C4 views from `workspace.dsl` into
+   `build/site` (the site root, the views are under `main/`).
+2. log4brains (pinned version, pinned Node.js, run with `npx`, no `package.json`)
+   builds the ADR site from `docs/architecture/decisions/` into `build/site/adr`, with
+   `docs/architecture/adr-index.md` as its home page. It needs the full git history
+   (`fetch-depth: 0`) for the dates and authors it shows.
+3. The old, now empty `main/decisions/` page of the Structurizr site is replaced by a
+   redirect to `/adr/`.
+
+**Why `log4brains-prepare`?** log4brains reads the status and date from the MADR header
+list (`* Status: ...`, `* Date: ...`), so before the build the script adapts the ADRs
+**in the CI checkout only** (never committed), without changing their content:
+
+- It removes the YAML front matter (`status:`, `date:`): log4brains does not read it,
+  and in front of the title it hides the header list. The header list repeats the same
+  values.
+- In `* Status: Superseded by [ADR-0006: ...](0006-....md)` it uses the file slug as the
+  link text: log4brains takes the superseding ADR from that text.
+- It moves the Status and Date items in front of other header items such as
+  `* Supersedes: ...`, so the list renders correctly after log4brains removes them.
+
+So ADRs keep their current format (front matter included): a new ADR shows up
+on the ADR site after it is merged (or after a manual run of `pages`), with no extra
+step.
+
 ## Running locally
 
-You only need Docker. Run the commands from the repository root.
+You need Docker, and Node.js 22 for the ADR site. Run the commands from the repository
+root.
 
 Validate the DSL:
 
@@ -373,6 +416,18 @@ docker run --rm -p 8080:8080 -v "$PWD:/var/model" ghcr.io/avisi-cloud/structuriz
 ```
 
 and browse to <http://localhost:8080>.
+
+Preview the ADR site with live reload. `log4brains-prepare` changes the ADR files in
+place, so run it in a throwaway clone (inside the git-ignored `build/`), never in your
+working copy:
+
+```sh
+git clone . build/adr-preview
+cd build/adr-preview
+.github/scripts/log4brains-prepare docs/architecture/decisions
+cp docs/architecture/adr-index.md docs/architecture/decisions/index.md
+npx --yes log4brains@1.1.0 preview
+```
 
 ## License
 
