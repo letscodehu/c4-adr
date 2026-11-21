@@ -2,21 +2,21 @@
 # Render every view of the Structurizr workspace of a git revision to PNG and SVG,
 # optionally with the model differences to another revision highlighted.
 #
-# Usage: render-views [--compare-to <base-rev> | --removed-in <head-rev>]
-#                     <git-rev | --working-tree> <output-dir>
+# Usage: render-views [--compare-to <base-rev>] <git-rev | --working-tree> <output-dir>
 #
-#   --compare-to <base-rev>   this revision is the After side: highlight what is
-#                             new (green) or changed (orange) since <base-rev>.
-#   --removed-in <head-rev>   this revision is the Before side: highlight what
-#                             <head-rev> removes (red, dashed).
-#   Both accept --working-tree as the other revision.
+#   --compare-to <base-rev>   this revision is the After side: also render it
+#                             with the model differences since <base-rev>
+#                             highlighted: new (green), changed (orange) and
+#                             removed (red, dashed; copied back from <base-rev>
+#                             so they stay visible). The Before side (<base-rev>
+#                             itself) is rendered without this option, plain.
 #
 # Writes, for every view in the workspace (the view key is the file name):
 #   <output-dir>/<view-key>.puml       PlantUML source, NOT highlighted; used to
 #                                      classify the views (changed / new / ...)
 #   <output-dir>/<view-key>.png, .svg  the view, NOT highlighted
-# and, with --compare-to / --removed-in, for every view that shows at least one
-# highlighted element or relationship:
+# and, with --compare-to, for every view that shows at least one highlighted
+# element or relationship:
 #   <output-dir>/<view-key>.diff.puml, .diff.png, .diff.svg   highlighted
 #
 # How: export-workspace.sh exports the workspace with the Structurizr CLI as
@@ -24,8 +24,9 @@
 # workspace `styles`), then the PlantUML Docker image renders each view. The
 # separate legend diagrams the exporter writes (`*-key.puml`) are skipped.
 # To highlight, both revisions are exported as JSON, compared with
-# `model-diff --json`, the affected elements and relationships are tagged and
-# styled with `highlight-diff`, and that JSON is exported as PlantUML again.
+# `model-diff --json`, `highlight-diff` tags and styles the affected elements and
+# relationships in the head JSON (and copies the removed ones back from the
+# base), and that JSON is exported as PlantUML again.
 #
 # Environment (all have defaults, override them from the workflow `env`):
 #   WORKSPACE, STRUCTURIZR_CLI_IMAGE   see export-workspace.sh
@@ -33,20 +34,16 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 [--compare-to <base-rev> | --removed-in <head-rev>] <git-rev | --working-tree> <output-dir>" >&2
+  echo "usage: $0 [--compare-to <base-rev>] <git-rev | --working-tree> <output-dir>" >&2
   exit 2
 }
 
-mode=""
-other_rev=""
-case "${1:-}" in
-  --compare-to | --removed-in)
-    [ "$#" -eq 4 ] || usage
-    mode="$1"
-    other_rev="$2"
-    shift 2
-    ;;
-esac
+base_rev=""
+if [ "${1:-}" = "--compare-to" ]; then
+  [ "$#" -eq 4 ] || usage
+  base_rev="$2"
+  shift 2
+fi
 [ "$#" -eq 2 ] || usage
 
 rev="$1"
@@ -86,26 +83,19 @@ if [ "$count" -eq 0 ]; then
   exit 0
 fi
 
-if [ -n "$mode" ]; then
-  "$scripts_dir/export-workspace.sh" "$rev" json "$work_dir/this"
-  "$scripts_dir/export-workspace.sh" "$other_rev" json "$work_dir/other"
-  this_json="$(ls "$work_dir"/this/*.json)"
-  other_json="$(ls "$work_dir"/other/*.json)"
-  if [ "$mode" = "--compare-to" ]; then
-    side=--after
-    set -- "$other_json" "$this_json"
-  else
-    side=--before
-    set -- "$this_json" "$other_json"
-  fi
+if [ -n "$base_rev" ]; then
+  "$scripts_dir/export-workspace.sh" "$rev" json "$work_dir/head"
+  "$scripts_dir/export-workspace.sh" "$base_rev" json "$work_dir/base"
+  head_json="$(ls "$work_dir"/head/*.json)"
+  base_json="$(ls "$work_dir"/base/*.json)"
   status=0
-  "$scripts_dir/model-diff" --json "$@" > "$work_dir/diff.json" || status=$?
+  "$scripts_dir/model-diff" --json "$base_json" "$head_json" > "$work_dir/diff.json" || status=$?
   if [ "$status" -gt 1 ]; then
     echo "error: model-diff failed" >&2
     exit "$status"
   fi
   if [ "$status" -eq 1 ]; then
-    "$scripts_dir/highlight-diff" "$side" "$this_json" "$work_dir/diff.json" "$work_dir/highlighted.json"
+    "$scripts_dir/highlight-diff" "$base_json" "$head_json" "$work_dir/diff.json" "$work_dir/highlighted.json"
     "$scripts_dir/export-workspace.sh" --file="$work_dir/highlighted.json" plantuml/structurizr "$work_dir/highlighted"
     highlighted="$(copy_views "$work_dir/highlighted" ".diff")"
     echo "$highlighted view(s) with highlighted model differences" >&2

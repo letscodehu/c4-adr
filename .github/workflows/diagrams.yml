@@ -2,9 +2,9 @@ name: diagrams
 
 # Renders every view of the base and the head workspace of a pull request, and
 # keeps one bot comment on the pull request up to date with Before / After
-# images of the views that differ. The images highlight the model differences:
-# new (green) and changed (orange) elements and relationships on the After
-# image, removed ones (red, dashed) on the Before image. Images go to the workflow artifact and to the
+# images of the views that differ. The Before image is plain; the After image
+# highlights the model differences: new (green), changed (orange) and removed
+# (red, dashed) elements and relationships. Images go to the workflow artifact and to the
 # orphan `diagram-previews` branch, never to `main`. See README.md,
 # "How the CI works".
 
@@ -46,10 +46,9 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           base_rev="$(git merge-base "origin/$BASE_REF" HEAD)"
-          # Plain <view>.puml/.png/.svg plus highlighted <view>.diff.* files;
-          # the base side shows what the head removes, the head side what is
-          # new or changed since the base.
-          "$SCRIPTS_DIR/render-views" --removed-in --working-tree "$base_rev" "$RUNNER_TEMP/diagrams/base"
+          # Base: plain <view>.puml/.png/.svg. Head: the same, plus highlighted
+          # <view>.diff.* files with the model differences since the base.
+          "$SCRIPTS_DIR/render-views" "$base_rev" "$RUNNER_TEMP/diagrams/base"
           "$SCRIPTS_DIR/render-views" --compare-to "$base_rev" --working-tree "$RUNNER_TEMP/diagrams/head"
 
           head_short="${HEAD_SHA:0:7}"

@@ -1,33 +1,47 @@
 #!/usr/bin/env python3
-"""Highlight the model differences in a Structurizr JSON workspace.
+"""Highlight the model differences on the After (head) workspace.
 
-Usage: highlight-diff (--before | --after) WORKSPACE.json DIFF.json OUTPUT.json
+Usage: highlight-diff BASE.json HEAD.json DIFF.json OUTPUT.json
 
-DIFF.json is the output of `model-diff --json BASE.json HEAD.json`.
-WORKSPACE.json is the head export (with --after) or the base export (with
---before) of the same comparison; the ids in DIFF.json refer to it.
+BASE.json and HEAD.json are Structurizr JSON exports, DIFF.json is the output of
+`model-diff --json BASE.json HEAD.json`. Writes a copy of HEAD.json to
+OUTPUT.json in which every model difference is visible and highlighted, so one
+After image shows all of them (the Before image stays plain):
 
-Tags the affected elements and relationships, together with their `related`
-ids (implied relationships, deployment instances), and adds a style for each
-tag to `views.configuration.styles`:
+    DIFF.json   tag            elements                  relationships
+    added       Diff: Added    green thick border        green thick solid line
+    changed     Diff: Changed  orange thick border       orange thick solid line
+    removed     Diff: Removed  red thick dashed border   red thick dashed line
 
-    side      DIFF.json   tag            elements                 relationships
-    --after   added       Diff: Added    green thick border       green thick solid line
-    --after   changed     Diff: Changed  orange thick border      orange thick solid line
-    --before  removed     Diff: Removed  red thick dashed border  red thick dashed line
+Added and changed items are tagged where they are, together with their
+`related` ids (implied relationships, deployment instances).
+
+Removed items are not in HEAD.json, so they are copied back from BASE.json with
+new ids: an element under its parent (matched by key, or itself copied back),
+a relationship (and its implied ones) under its source element, with source,
+destination and `linkedRelationshipId` mapped to the head ids. Implied and
+replicated relationships of a removed element (e.g. those of a removed
+container instance) are copied back too. Each head view
+gets the removed elements and relationships its base view (same key) showed,
+plus the end points of those relationships, so they are drawn where they used
+to be. Removed views are not touched (they have no After image).
 
 The styles only set the border / line (stroke, strokeWidth, border; color,
 thickness, style), so the fill colour and the shape from the workspace styles
 stay. The tag is appended last, so its style wins over the workspace styles for
 these properties. Relationships are dashed by default in Structurizr, so new
-and changed ones are drawn solid to stand out from both the unchanged and the
-removed (dashed) ones. Existing tags and styles are kept.
+and changed ones are drawn solid, removed ones dashed. Existing tags and styles
+are kept.
 
-Writes the result to OUTPUT.json and prints the number of highlighted ids to
-stderr. Exit codes: 0 = ok, 2 = error.
+Prints a summary to stderr. Exit codes: 0 = ok, 2 = error.
 """
 
+import copy
+import importlib.machinery
+import importlib.util
+import itertools
 import json
+import pathlib
 import sys
 
 ADDED = "Diff: Added"
@@ -37,13 +51,6 @@ REMOVED = "Diff: Removed"
 GREEN = "#2DA44E"
 ORANGE = "#FB8500"
 RED = "#CF222E"
-
-# DIFF.json section -> tag, per side. Earlier entries win if an id is in more
-# than one section (e.g. an implied relationship of an added and a changed one).
-SECTIONS = {
-    "--after": [("added", ADDED), ("changed", CHANGED)],
-    "--before": [("removed", REMOVED)],
-}
 
 ELEMENT_STYLES = {
     ADDED: {"stroke": GREEN, "strokeWidth": 6},
@@ -56,36 +63,57 @@ RELATIONSHIP_STYLES = {
     REMOVED: {"color": RED, "thickness": 4, "style": "Dashed"},
 }
 
+TOP_COLLECTIONS = ("people", "softwareSystems", "customElements", "deploymentNodes")
 CHILD_COLLECTIONS = (
-    "people",
-    "softwareSystems",
-    "customElements",
     "containers",
     "components",
-    "deploymentNodes",
     "children",
     "infrastructureNodes",
     "softwareSystemInstances",
     "containerInstances",
 )
+# Element fields that hold the id of another element.
+REFERENCE_FIELDS = ("softwareSystemId", "containerId")
+VIEW_COLLECTIONS = (
+    "systemLandscapeViews",
+    "systemContextViews",
+    "containerViews",
+    "componentViews",
+    "dynamicViews",
+    "deploymentViews",
+)
 
 
-def tags_by_id(diff, side):
-    """Return {id: tag} of everything to highlight on this side."""
-    result = {}
-    for section, tag in SECTIONS[side]:
-        for item in diff.get(section, []):
-            for item_id in [item["id"], *item.get("related", [])]:
-                result.setdefault(str(item_id), tag)
-    return result
+def load_model_diff():
+    path = pathlib.Path(__file__).resolve().parent / "model-diff"
+    loader = importlib.machinery.SourceFileLoader("model_diff", str(path))
+    spec = importlib.util.spec_from_loader("model_diff", loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
 
 
-def walk(raw):
-    """Yield (element, its relationships) for the element and its descendants."""
-    yield raw, raw.get("relationships", [])
-    for collection in CHILD_COLLECTIONS:
-        for child in raw.get(collection, []):
-            yield from walk(child)
+model_diff = load_model_diff()
+
+
+def walk(raw, collection=None, parent=None):
+    """Yield (element, its collection, its parent element) for raw and its descendants."""
+    yield raw, collection, parent
+    for child_collection in CHILD_COLLECTIONS:
+        for child in raw.get(child_collection, []):
+            yield from walk(child, child_collection, raw)
+
+
+def index(workspace):
+    """Return ({id: (element, collection, parent)}, {relationship id: (relationship, owner)})."""
+    elements, relationships = {}, {}
+    for collection in TOP_COLLECTIONS:
+        for top in workspace.get("model", {}).get(collection, []):
+            for element, element_collection, parent in walk(top, collection):
+                elements[str(element["id"])] = (element, element_collection, parent)
+                for relationship in element.get("relationships", []):
+                    relationships[str(relationship["id"])] = (relationship, element)
+    return elements, relationships
 
 
 def add_tag(raw, tag):
@@ -95,23 +123,145 @@ def add_tag(raw, tag):
     raw["tags"] = ",".join(tags)
 
 
-def highlight(workspace, diff, side):
-    """Tag and style `workspace` in place. Return {tag: number of ids tagged}."""
-    wanted = tags_by_id(diff, side)
+def views_by_key(workspace):
+    views = workspace.get("views", {})
+    return {view["key"]: view for collection in VIEW_COLLECTIONS for view in views.get(collection, [])}
+
+
+def restore_removed(base, head, diff, base_info, head_info):
+    """Copy the removed items of `base` into `head`. Return the new head ids of them."""
+    base_elements, base_relationships = index(base)
+    head_elements, _ = index(head)
+    numeric = [int(i) for i in [*base_elements, *base_relationships, *index(head)[1], *head_elements] if i.isdigit()]
+    fresh = (str(n) for n in itertools.count(max(numeric, default=0) + 1000))
+
+    # base id -> head id: same key on both sides, or a restored copy.
+    id_map = {
+        str(base_info["ids"][key]): str(head_info["ids"][key])
+        for key in base_info["ids"].keys() & head_info["ids"].keys()
+    }
+    removed = {str(i) for item in diff.get("removed", []) for i in [item["id"], *item.get("related", [])]}
+    restored = set()
+
+    # Elements, parents before children (index() walks top-down).
+    for base_id, (raw, collection, parent) in base_elements.items():
+        if base_id not in removed:
+            continue
+        new = {k: copy.deepcopy(v) for k, v in raw.items() if k not in CHILD_COLLECTIONS and k != "relationships"}
+        new["id"] = next(fresh)
+        for field in REFERENCE_FIELDS:
+            if field in new:
+                new[field] = id_map.get(str(new[field]), new[field])
+        add_tag(new, REMOVED)
+        if parent is None:
+            head.setdefault("model", {}).setdefault(collection, []).append(new)
+        else:
+            head_parent = id_map.get(str(parent["id"]))
+            if head_parent is None:
+                continue  # parent neither kept nor restored
+            head_elements[head_parent][0].setdefault(collection, []).append(new)
+        head_elements[new["id"]] = (new, collection, None)
+        id_map[base_id] = new["id"]
+        restored.add(new["id"])
+
+    # Implied and replicated relationships of a removed element are gone too.
+    removed_elements = {base_id for base_id in base_elements if base_id in removed}
+    for base_id, (raw, _) in base_relationships.items():
+        if raw.get("linkedRelationshipId") and (
+            str(raw.get("sourceId")) in removed_elements or str(raw.get("destinationId")) in removed_elements
+        ):
+            removed.add(base_id)
+
+    # Relationships: give every removed one an id first, then map the links
+    # (to a restored relationship, or to the one with the same key in head).
+    relationship_map = {base_id: next(fresh) for base_id in base_relationships if base_id in removed}
+    # Implied relationships have no model-diff key: match them by their ends
+    # and description.
+    head_by_ends = {
+        (str(raw.get("sourceId")), str(raw.get("destinationId")), raw.get("description", "")): rid
+        for rid, (raw, _) in index(head)[1].items()
+    }
+    kept_relationships = {**id_map, **relationship_map}
+    for base_id, (raw, _) in base_relationships.items():
+        ends = (
+            id_map.get(str(raw.get("sourceId"))),
+            id_map.get(str(raw.get("destinationId"))),
+            raw.get("description", ""),
+        )
+        if base_id not in kept_relationships and ends in head_by_ends:
+            kept_relationships[base_id] = head_by_ends[ends]
+    for base_id, new_id in relationship_map.items():
+        raw, _ = base_relationships[base_id]
+        source = id_map.get(str(raw.get("sourceId")))
+        destination = id_map.get(str(raw.get("destinationId")))
+        if source is None or destination is None:
+            continue
+        new = copy.deepcopy(raw)
+        new.update(id=new_id, sourceId=source, destinationId=destination)
+        linked = raw.get("linkedRelationshipId")
+        if linked is not None:
+            mapped = kept_relationships.get(str(linked))
+            if mapped:
+                new["linkedRelationshipId"] = mapped
+            else:
+                new.pop("linkedRelationshipId")
+        add_tag(new, REMOVED)
+        head_elements[source][0].setdefault("relationships", []).append(new)
+        restored.add(new_id)
+
+    # Views: show the restored items where the base view showed them.
+    base_views, head_views = views_by_key(base), views_by_key(head)
+    for key, head_view in head_views.items():
+        base_view = base_views.get(key)
+        if base_view is None:
+            continue
+        shown = {str(e["id"]) for e in head_view.setdefault("elements", [])}
+
+        def show(element_id):
+            if element_id in head_elements and element_id not in shown:
+                head_view["elements"].append({"id": element_id, "x": 0, "y": 0})
+                shown.add(element_id)
+
+        for entry in base_view.get("elements", []):
+            new_id = id_map.get(str(entry["id"]))
+            if new_id in restored:
+                show(new_id)
+        for entry in base_view.get("relationships", []):
+            new_id = relationship_map.get(str(entry["id"]))
+            if new_id not in restored:
+                continue
+            raw, _ = base_relationships[str(entry["id"])]
+            show(id_map[str(raw["sourceId"])])
+            show(id_map[str(raw["destinationId"])])
+            head_view.setdefault("relationships", []).append({**copy.deepcopy(entry), "id": new_id})
+    return restored
+
+
+def highlight(base, head, diff):
+    """Highlight `diff` on `head` in place. Return {tag: number of items tagged}."""
+    base_info, head_info = {}, {}
+    model_diff.normalise(base, base_info)
+    model_diff.normalise(head, head_info)
+    restored = restore_removed(base, head, diff, base_info, head_info)
+
+    wanted = {}
+    for section, tag in (("added", ADDED), ("changed", CHANGED)):
+        for item in diff.get(section, []):
+            for item_id in [item["id"], *item.get("related", [])]:
+                wanted.setdefault(str(item_id), tag)
+
     used = {"elements": set(), "relationships": set()}
     counts = {}
-    model = workspace.setdefault("model", {})
-    for collection in ("people", "softwareSystems", "customElements", "deploymentNodes"):
-        for top in model.get(collection, []):
-            for element, relationships in walk(top):
-                for raw, kind in [(element, "elements")] + [(r, "relationships") for r in relationships]:
-                    tag = wanted.get(str(raw.get("id")))
-                    if tag:
-                        add_tag(raw, tag)
-                        used[kind].add(tag)
-                        counts[tag] = counts.get(tag, 0) + 1
+    elements, relationships = index(head)
+    for kind, items in (("elements", elements), ("relationships", relationships)):
+        for item_id, (raw, *_) in items.items():
+            tag = REMOVED if item_id in restored else wanted.get(item_id)
+            if tag:
+                add_tag(raw, tag)
+                used[kind].add(tag)
+                counts[tag] = counts.get(tag, 0) + 1
 
-    styles = workspace.setdefault("views", {}).setdefault("configuration", {}).setdefault("styles", {})
+    styles = head.setdefault("views", {}).setdefault("configuration", {}).setdefault("styles", {})
     for kind, definitions in (("elements", ELEMENT_STYLES), ("relationships", RELATIONSHIP_STYLES)):
         for tag in sorted(used[kind]):
             styles.setdefault(kind, []).append({"tag": tag, **definitions[tag]})
@@ -119,23 +269,24 @@ def highlight(workspace, diff, side):
 
 
 def main(argv):
-    if len(argv) != 5 or argv[1] not in SECTIONS:
-        print("usage: highlight-diff (--before | --after) WORKSPACE.json DIFF.json OUTPUT.json", file=sys.stderr)
+    if len(argv) != 5:
+        print("usage: highlight-diff BASE.json HEAD.json DIFF.json OUTPUT.json", file=sys.stderr)
         return 2
-    side, workspace_path, diff_path, output_path = argv[1:]
+    base_path, head_path, diff_path, output_path = argv[1:]
     try:
-        with open(workspace_path, encoding="utf-8") as f:
-            workspace = json.load(f)
-        with open(diff_path, encoding="utf-8") as f:
-            diff = json.load(f)
-        counts = highlight(workspace, diff, side)
+        loaded = []
+        for path in (base_path, head_path, diff_path):
+            with open(path, encoding="utf-8") as f:
+                loaded.append(json.load(f))
+        base, head, diff = loaded
+        counts = highlight(base, head, diff)
         with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(workspace, f, ensure_ascii=False, indent=2)
+            json.dump(head, f, ensure_ascii=False, indent=2)
     except (OSError, ValueError, KeyError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     summary = ", ".join(f"{n} {tag}" for tag, n in sorted(counts.items())) or "nothing"
-    print(f"Highlighted {summary} ({side[2:]})", file=sys.stderr)
+    print(f"Highlighted {summary}", file=sys.stderr)
     return 0
 
 

@@ -14,8 +14,7 @@ The fixtures in fixtures/preview/ are minimal `render-views` output directories
     Deployment      no     yes                                      -> new
 
 HighlightTest copies them into a temporary directory and adds highlighted
-`<view-key>.diff.puml` files, as `render-views --compare-to / --removed-in`
-writes them.
+`<view-key>.diff.puml` files, as `render-views --compare-to` writes them.
 """
 
 import contextlib
@@ -155,7 +154,7 @@ class HighlightTest(unittest.TestCase):
     def highlight(self, side, *keys):
         for key in keys:
             source = (self.dirs[side] / f"{key}.puml").read_text(encoding="utf-8")
-            highlighted = source.replace("@enduml", "' // Element,Diff: Changed\n@enduml")
+            highlighted = source.replace("@enduml", "' // Element,Diff: Removed\n@enduml")
             (self.dirs[side] / f"{key}.diff.puml").write_text(highlighted, encoding="utf-8")
 
     def comment(self):
@@ -164,8 +163,7 @@ class HighlightTest(unittest.TestCase):
             preview_comment.read_views(self.dirs["head"]),
             BASE_URL,
             HEAD_URL,
-            base_highlighted=preview_comment.read_highlighted(self.dirs["base"]),
-            head_highlighted=preview_comment.read_highlighted(self.dirs["head"]),
+            highlighted=preview_comment.read_highlighted(self.dirs["head"]),
         )
 
     def test_highlighted_sources_do_not_change_the_classification(self):
@@ -178,8 +176,7 @@ class HighlightTest(unittest.TestCase):
             preview_comment.compare(views("base"), views("head")),
         )
 
-    def test_highlighted_images_and_legend(self):
-        self.highlight("base", "Legacy")
+    def test_after_is_highlighted_before_stays_plain_and_legend_is_shown(self):
         self.highlight("head", "SystemContext", "Deployment")
         text = self.comment()
         self.assertIn(preview_comment.LEGEND, text)
@@ -192,7 +189,13 @@ class HighlightTest(unittest.TestCase):
         self.assertEqual(
             section(text, "Deployment")[-1], f"| _new view_ | ![Deployment (after)]({HEAD_URL}/Deployment.diff.png) |"
         )
-        self.assertEqual(section(text, "Legacy")[-1], f"| ![Legacy (before)]({BASE_URL}/Legacy.diff.png) | _removed_ |")
+        self.assertEqual(section(text, "Legacy")[-1], f"| ![Legacy (before)]({BASE_URL}/Legacy.png) | _removed_ |")
+
+    def test_base_side_is_never_highlighted(self):
+        self.highlight("base", "SystemContext", "Legacy")
+        text = self.comment()
+        self.assertNotIn(".diff.png", text)
+        self.assertNotIn(preview_comment.LEGEND, text)
 
     def test_unchanged_views_show_the_plain_image_and_no_legend(self):
         # E.g. only a url changed: highlighted, but nothing visible changed.
@@ -203,7 +206,7 @@ class HighlightTest(unittest.TestCase):
 
     def test_without_highlighting_the_comment_is_as_before(self):
         self.assertEqual(self.comment(), comment())
-        self.assertNotIn("Highlighted model changes", comment())
+        self.assertNotIn(preview_comment.LEGEND, comment())
 
     def test_command_line_reads_the_highlighted_images(self):
         self.highlight("head", "SystemContext")
