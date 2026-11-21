@@ -1,5 +1,9 @@
 name: pages
 
+# Builds two static sites and deploys them together, as one GitHub Pages artifact:
+# the Structurizr site (C4 views) at the root and the log4brains site (ADRs) under
+# /adr/. See README.md, "How the CI works".
+
 on:
   push:
     branches: [main]
@@ -9,6 +13,11 @@ env:
   WORKSPACE: docs/architecture/workspace.dsl
   SITE_GENERATR_IMAGE: ghcr.io/avisi-cloud/structurizr-site-generatr:1.6.0
   SITE_DIR: build/site
+  ADR_DIR: docs/architecture/decisions
+  ADR_INDEX: docs/architecture/adr-index.md   # home page of the log4brains site
+  SCRIPTS_DIR: .github/scripts
+  NODE_VERSION: "22"
+  LOG4BRAINS_VERSION: 1.1.0
 
 permissions:
   contents: read
@@ -21,12 +30,17 @@ concurrency:
 
 jobs:
   build:
-    name: Build Structurizr site
+    name: Build Structurizr and log4brains sites
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # log4brains reads the ADR dates and authors from git history
 
-      - name: Generate site
+      - id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Generate Structurizr site
         run: |
           docker run --rm \
             --user "$(id -u):$(id -g)" \
@@ -37,7 +51,21 @@ jobs:
               --default-branch main \
               --output-dir "$SITE_DIR"
 
-      - uses: actions/configure-pages@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Generate log4brains site
+        env:
+          BASE_PATH: ${{ steps.pages.outputs.base_path }}
+        run: |
+          # Only in this checkout, never committed: adapt the ADR format for
+          # log4brains (see the script) and add the home page of the ADR site.
+          "$SCRIPTS_DIR/log4brains-prepare" "$ADR_DIR"
+          cp "$ADR_INDEX" "$ADR_DIR/index.md"
+          npx --yes "log4brains@$LOG4BRAINS_VERSION" build \
+            --basePath "$BASE_PATH/adr" \
+            --out "$SITE_DIR/adr"
 
       - uses: actions/upload-pages-artifact@v3
         with:

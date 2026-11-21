@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Adapt the ADR files in a directory, in place, so that log4brains reads them.
+
+Usage: log4brains-prepare DECISIONS_DIR
+
+Run it in the CI checkout only, right before `log4brains build`, and never
+commit the result: the ADRs in the repository stay as they are. It changes the
+format, not the content:
+
+- A leading YAML front matter block (`---` ... `---`) is removed. log4brains
+  does not understand front matter: it reads the status and the date from the
+  MADR header list (`* Status: ...`, `* Date: ...`) right below the title, and
+  a front matter block in front of the title hides that list. Our ADRs repeat
+  the front matter values in the header list, so nothing is lost.
+- In a `Status: Superseded by [text](NNNN-slug.md)` line, the link text is
+  replaced by the slug of the target file (`NNNN-slug`). log4brains takes the
+  superseding ADR's slug from the text of that line, so a descriptive link
+  text ("ADR-0006: ...") would break the build. log4brains then shows the
+  superseding ADR's title itself.
+
+Prints one line per changed file. Exit codes: 0 = ok, 2 = error.
+"""
+
+import pathlib
+import re
+import sys
+
+STATUS_SUPERSEDED = re.compile(
+    r"^(?P<prefix>\s*[*-]\s*Status\s*:\s*Superseded\s+by\s*:?\s*)"
+    r"\[[^\]]*\]\((?P<target>[^)\s]+?\.md)\)",
+    re.IGNORECASE,
+)
+
+
+def strip_front_matter(text):
+    """Remove a leading `---` ... `---` block and the blank lines after it."""
+    lines = text.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return text
+    for end in range(1, len(lines)):
+        if lines[end].strip() == "---":
+            rest = lines[end + 1:]
+            while rest and not rest[0].strip():
+                rest.pop(0)
+            return "\n".join(rest)
+    return text  # no closing `---`: not front matter, leave it alone
+
+
+def slug_superseded_by_links(text):
+    """Use the target file's slug as the text of `Superseded by` links."""
+    def replace(match):
+        target = match.group("target")
+        slug = pathlib.PurePosixPath(target).name[: -len(".md")]
+        return f"{match.group('prefix')}[{slug}]({target})"
+
+    return "\n".join(STATUS_SUPERSEDED.sub(replace, line) for line in text.split("\n"))
+
+
+def prepare(text):
+    return slug_superseded_by_links(strip_front_matter(text))
+
+
+def main(argv):
+    if len(argv) != 2:
+        print(__doc__.strip().splitlines()[2], file=sys.stderr)
+        return 2
+    directory = pathlib.Path(argv[1])
+    if not directory.is_dir():
+        print(f"log4brains-prepare: not a directory: {directory}", file=sys.stderr)
+        return 2
+    for path in sorted(directory.glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        prepared = prepare(text)
+        if prepared != text:
+            path.write_text(prepared, encoding="utf-8")
+            print(f"prepared {path}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
