@@ -1,0 +1,11 @@
+---
+# log4brains configuration: the ADR site published at
+# https://letscodehu.github.io/c4-adr/adr/ (see README.md, "Published site").
+project:
+  name: Webshop architecture decisions
+  tz: Europe/Budapest
+  adrFolder: ./docs/architecture/decisions
+  repository:
+    url: https://github.com/letscodehu/c4-adr
+    provider: github
+    viewFileUriPattern: /blob/main/%path

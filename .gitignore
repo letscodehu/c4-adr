@@ -1,3 +1,4 @@
 build/
 .structurizr/
 __pycache__/
+.log4brains/

@@ -1,7 +1,6 @@
 workspace "Webshop" "C4 model of an imaginary webshop, evolved through Architecture Decision Records." {
 
     !identifiers hierarchical
-    !adrs decisions madr
 
     model {
         customer = person "Customer" "A person who browses the catalogue and places orders."
